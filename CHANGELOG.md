@@ -5,6 +5,117 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-07-12
+
+The launch release: Accent CMS becomes publicly downloadable. One
+license-unlocked binary per platform, published with mandatory signing to
+[github.com/AccentCMS/accent](https://github.com/AccentCMS/accent), plus
+the first release of the built-in content agent.
+
+### Added
+
+- **Public single-binary distribution (f247)**: releases are now published
+  to the public download repository `AccentCMS/accent` -- six platform
+  archives (`accent-v<version>-<target>`), a SHA-256 checksums file, and a
+  mandatory GPG signature (`checksums-v<version>.txt.asc`; the release
+  signing key is published as `release-signing-key.asc`). Install scripts
+  (`install.sh` / `install.ps1`) download, checksum-verify, and (with gpg
+  present) signature-verify automatically; every release additionally
+  receives a publication attestation in the Sigstore transparency log.
+  There are no per-edition artifacts: every download contains the full
+  feature set and the license key sets the runtime tier.
+- **Content agent (f242, free in every edition)**: `accent agent` runs a
+  budgeted, human-in-the-loop LLM session over the site's content with
+  explicit provider/endpoint/model arguments and stdin approval for
+  writes.
+- **Agent admin chat (f244, f246)**: the admin UI gains a chat panel
+  driving the same agent over `/_admin/agent/*` SSE with approval and
+  steering; flipping `agent.enabled` changes nothing but the agent routes
+  and panel markup.
+- **Agent audit stamping (f245)**: agent sessions stamp an audit hash that
+  cross-references the session log with git history.
+- **Public plugin registry**: `github.com/AccentCMS/plugin-registry` is
+  live (empty for now); default-config `accent plugin install` resolves it
+  and reports missing plugins cleanly (b099).
+- **Relative markdown links now just work (b092)**: intra-site links written
+  the portable, GitHub-compatible way -- `[E001](e001-example.md)`,
+  `[up](../guide/setup.md)` -- are rewritten at render time to the target
+  page's clean URL, resolved against the linking page's *source file* exactly
+  as GitHub and IDE previews resolve them. Applies to `accent serve` and
+  `accent build` alike; unresolvable destinations are left untouched, and
+  `accent validate` now flags them (new `BrokenRelativeLink` warning) instead
+  of letting them ship as silent 404s. Absolute `.md` links to existing pages
+  are rewritten too (skipping the redirect hop) and are no longer
+  false-positived by `accent validate`.
+
+### Changed
+
+- **Version output drops the compile-time edition tag (f247)**: `accent
+  --version` now prints `<version> (<hash>) [license: <tier>]` and the page
+  footer's `accent.version_string` prints `<version> (<hash>)`. Under
+  single-binary distribution every release binary compiles the same feature
+  superset, so the old `[edition: ...]` tag would have read `pro` on every
+  installation regardless of license. The admin Settings "Edition" row now
+  shows the runtime license tier (Core (free) / Core+ / Standard / Pro).
+- **Feature-invariant config schema (f234)**: the `config.yaml` schema is now
+  identical in every build of Accent CMS. Config sections for subsystems that
+  are not compiled into a binary (for example `cdn:` or `mcp:` on a Standard
+  binary) are now parsed, type-checked, and retained instead of being silently
+  ignored, and a startup warning names each such section so the omission is
+  visible. As a consequence, a *malformed* section for a compiled-out
+  subsystem now fails config load with a parse error (previously it was
+  skipped as an unknown key). Well-formed configs are unaffected.
+- **Canonical URLs without trailing slashes (b092)**: `/section/` now 301s to
+  `/section` in `accent serve` and `accent serve-static` (the redirect fires
+  only for URLs that actually serve; unknown paths stay single-request 404s),
+  and `sitemap.xml` emits the same canonical no-slash form as every other URL
+  surface instead of appending a trailing slash.
+- **Shared content kernel (f231)**: the content-critical state (index,
+  cache, config) moved into a `ContentKernel` shared by the server and the
+  MCP command, unifying the two content indexes.
+
+### Removed
+
+- **Trial licenses**: the 10-day per-edition trial is withdrawn. Evaluation
+  is the free build/dev tier (no key, no time limit) plus a low-commitment
+  monthly license for production. Documentation no longer offers trials;
+  removal of the `accent license trial` command is tracked as f249.
+
+### Fixed
+
+- **Static builds of versioning roots (b098)**: `accent build` rendered a
+  versioning root's shell page (for example `/docs`) as a dead-end page,
+  while `accent serve` 302s it to the default version; the build now emits
+  the equivalent redirect stub.
+- **`accent validate` file-serving-route false positives (b094)**: absolute
+  links under `/media/`, `/content-media/`, `/theme/assets/`,
+  `/.well-known/`, and `/assets/plugins/` are no longer reported as broken
+  pages.
+- **Agent hangs (b090, b091)**: `accent agent` no longer hangs on exit when
+  stdin never EOFs, and an approval pause can no longer outlive the session
+  budget when the requesting client disconnects.
+- **Serve-spawn test flakes on macOS (b095)** and the 500-line rule breach
+  that turned CI red for unrelated PRs (b097).
+
+### Security
+
+- **CDN license gate now covers config reload and live requests (f247)**:
+  the Pro-only CDN integration was license-checked only at serve startup, so
+  a SIGHUP or `POST /_admin/reload` with `cdn.enabled: true` could activate
+  asset rewriting, outbound cache purges, and the proxied-font routes
+  without a Pro key. Reloads now re-gate `cdn.enabled` (mirroring the admin
+  UI re-gate), and the `/_fonts/*` and purge-webhook handlers re-check it
+  per request. Groundwork for single-binary distribution, where MCP and CDN
+  are compiled into every release binary and the license key alone unlocks
+  them.
+- **Release supply chain**: GPG signing of the release checksums is now
+  mandatory (publishing fails without a verified signature), third-party
+  deploy tooling was removed from the release path, and every published
+  release is attested at publication time.
+- Bumped `crossbeam-epoch` 0.9.18 -> 0.9.20 (RUSTSEC-2026-0204: invalid
+  pointer dereference in the `fmt::Pointer` impl for `Atomic`/`Shared`).
+  Transitive dependency; lockfile-only patch bump.
+
 ## [0.21.0] - 2026-07-04
 
 Checkpoint release before the agent-harness integration cycle (E036/E037):
