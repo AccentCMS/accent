@@ -1,0 +1,10 @@
+# This repository hosts release downloads only; the source and issue
+# tracker are private. Point users at Discussions and the product site.
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/AccentCMS/accent/discussions
+    about: Ask questions, report problems with a release, or discuss Accent CMS.
+  - name: Product, documentation, and licensing
+    url: https://accentcms.dev
+    about: Documentation, pricing, and license support.

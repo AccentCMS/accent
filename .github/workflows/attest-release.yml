@@ -1,0 +1,54 @@
+name: Attest Release Assets
+
+# Publication attestation for every release (stable and pre-release).
+#
+# Builds happen in the private source repository, and GitHub artifact
+# attestations bind to the repository whose workflow creates them (and are
+# free only on public repos), so true SLSA build provenance is not possible
+# here. What this workflow attests instead: "these exact bytes were present
+# on this release of AccentCMS/accent at publication time, and the GPG
+# signature over their checksums verified against the published release
+# signing key." The GPG signature remains the primary trust root; the
+# attestation adds post-publish tamper evidence via the Sigstore
+# transparency log.
+#
+# The release workflow publishes draft-first, so all assets exist by the
+# time the `published` event fires.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: read
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+    # The repository copy of the signing key is the verification anchor.
+    - uses: actions/checkout@v4
+
+    - name: Download release assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.event.release.tag_name }}
+      run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+
+    # A failed verification fails the workflow loudly on a fresh release --
+    # this is CI performing the same steps every user is told to run.
+    - name: Verify GPG signature and checksums
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        gpg --import release-signing-key.asc
+        gpg --verify "assets/checksums-${TAG}.txt.asc" "assets/checksums-${TAG}.txt"
+        cd assets
+        sha256sum -c "checksums-${TAG}.txt"
+
+    - name: Attest publication of the binaries
+      uses: actions/attest-build-provenance@v3
+      with:
+        subject-path: assets/accent-*

@@ -1,0 +1,34 @@
+Accent CMS Binary Distribution License
+
+Copyright (c) 2026 AccentX GmbH. All rights reserved.
+
+The Accent CMS binaries distributed through this repository are proprietary
+software.
+
+Permitted use:
+
+1. You may download, install, and run the binaries free of charge for
+   development, evaluation, and static site generation ("accent build" and
+   non-production "accent serve"), per the free tier described at
+   https://accentcms.dev.
+2. Paid capabilities (production serving, the admin authoring UI, and Pro
+   integrations) are unlocked by a license key and governed by the terms
+   accepted at purchase. Current tiers and terms: https://accentcms.dev.
+
+Restrictions:
+
+You may not reverse engineer, decompile, modify, or redistribute the
+binaries, remove or circumvent the license verification, or use the software
+to provide a competing hosted service, except where applicable law grants
+you a non-waivable right to do so.
+
+Warranty and liability:
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE,
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW.
+
+This notice is a placeholder pending the reviewed end-user license
+agreement; the terms published at https://accentcms.dev prevail where they
+differ.
