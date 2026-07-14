@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-07-14
+
+A bugfix release. It completes the trial-license code removal that 0.22.0
+announced at the policy level, corrects how an expired legacy trial key is
+reported at startup, and folds in two developer-profile fixes that no
+released binary was ever affected by.
+
+### Removed
+
+- **`accent license trial` subcommand (f249)**: the code removal that the
+  0.22.0 "Trial licenses" note forward-referenced. The subcommand, its
+  dispatch wiring, and the `TRIAL_DAYS` constant are gone, and no upsell,
+  startup banner, or `accent license status` line references trials anymore.
+  Evaluation remains the free build/dev-serve tier (Policy A2) or a
+  low-commitment monthly license. Previously issued `kind: "trial"` keys
+  still validate and expire under the time-constrained (monthly/rental)
+  rules -- there is no retroactive invalidation -- so a legacy trial key now
+  renders as `Monthly (rental)`.
+
+### Fixed
+
+- **Expired legacy trial key mislabelled at `serve --production` startup
+  (f249)**: the expired-license nudge now branches on the owned-vs-rental
+  lifecycle rather than the raw `cadence` claim, so a legacy trial key
+  (which carries no cadence) is correctly treated as time-constrained -- it
+  is reported as running as Core instead of falsely claiming perpetual
+  ownership, and the spurious "Trial license active" banner is gone.
+- **Developer-profile only, no released-binary impact**: the plugin-runtime
+  fuel-cap test no longer flakes under host CPU load (b096), and ad-hoc
+  single-file serving under the `edition-core` compile profile (media
+  compiled out -- never a released build) no longer 404s sibling static
+  assets (b100). Every released binary compiles `media` in and already
+  served these correctly.
+
 ## [0.22.0] - 2026-07-12
 
 The launch release: Accent CMS becomes publicly downloadable. One
