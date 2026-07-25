@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-07-25
+
+Sub-path deployment support lands: a static build (or a proxied `accent
+serve`) now works correctly when the site lives under a path prefix
+such as a GitHub Pages project site or a reverse-proxy mount point.
+Alongside it, the two-release-old docs promotion checklist becomes a
+tool with a fail-closed release gate behind it, and the workspace picks
+up a Rust toolchain bump plus the CI/dependency fixes that came with
+validating it.
+
+### Added
+
+- **Base path support for sub-path deployments (f255)**: `site.base_path`
+  config field plus `--base-path` on `accent build` and
+  `accent serve-static`. Every internal URL (page links, theme assets,
+  media, search fetch paths and result URLs, `llms.txt` links, `.md`
+  redirect stubs, pagination, tag links) is emitted under the prefix, so a
+  static build works when served from a sub-path such as a GitHub Pages
+  project site. The prefix auto-derives from the path component of
+  `site.url`/`--base-url`, making the documented
+  `accent build --base-url https://user.github.io/repo` recipe work as
+  written; an explicit `base_path` wins, and if it diverges from the
+  URL's own path a startup/build warning names both values and the
+  affected absolute-URL surfaces (sitemap, feeds, canonicals, JSON-LD).
+  Absolute artifacts compose the prefix exactly once. New `url(path)`
+  template function/filter for themes; in-tree themes no longer hardcode
+  root-absolute paths, and `accent build` warns about hardcoded
+  root-absolute URLs in theme templates and fails the build if any
+  emitted file still contains an unprefixed internal URL. `accent serve`
+  and `accent serve-static` serve the site under the prefix -- reserved
+  infrastructure routes, now including `/_health` and `/.well-known`,
+  stay at the server root -- so local serving reproduces the deployed URL
+  space. Post-review hardening: DocFind's native search index (the JSON
+  API/MCP consumers) is built from its own root-relative document set
+  instead of reusing prefixed browser-index bytes, so startup search
+  under a base path returns results again; the version-scoped-search
+  (f225) "/" catch-all is preserved instead of being joined into the
+  prefix; and `font_css_url()` now joins the prefix like `cdn_url()`,
+  with proxied font CSS emitting relative `../files/` references so
+  cached stylesheets stay correct under any mount prefix.
+- **Docs promotion tool and fail-closed release gate (f254)**: `cargo run
+  -p docs-promote -- promote --release X.Y` executes the versioned-docs
+  release promotion (freeze the `vX.Y-dev` bucket to `vX.Y`, relabel both
+  bucket roots, seed `vX.(Y+1)-dev`, regenerate the frozen-content
+  manifest) as a single idempotent, non-committing tool instead of a
+  manual checklist -- closing both the omission failure class (b101:
+  v0.22.0 shipped without the docs ever being promoted) and the
+  incompleteness failure class (b108: the stale "0.22-dev" breadcrumb).
+  `scripts/check-docs-promotion.sh` backs it with an independent gate
+  wired into both `scripts/release.sh` and `release.yml`: a stable-tag
+  release now fails closed if the docs corpus was never promoted,
+  matching the existing `LICENSE_PUBLIC_KEY_PEM` fail-closed precedent
+  (pre-release tags are exempt). Repo-internal tooling with no render
+  surface or product-facing behavior. This release's own docs were
+  promoted with it: `v0.23` is now the frozen release bucket and
+  `v0.24-dev` the writable one.
+
+### Fixed
+
+- **Frontmatter redirects no longer poison browser redirect caches
+  (b107)**: a simple `redirect: /target` (and the detailed form without
+  an explicit `code:`) now emits `302 Found` with `Cache-Control:
+  no-cache` instead of a permanent `301`. An author-editable "moving
+  pointer" redirect cached as permanent by the browser was surviving
+  server restarts and content changes, producing convincing
+  "the docs are broken" reports on shared dev ports. `code: 301` remains
+  the explicit opt-in for deliberate permanent migrations;
+  canonicalization redirects (trailing slash, `.md` cleanup,
+  permalink-pattern maps) are unaffected and stay 301.
+- **Version-bucket breadcrumb showed the wrong version after promotion
+  (b108)**: a released version bucket's `menu.title` frontmatter kept
+  reading "X.Y-dev" after promotion, so the breadcrumb and prev/next
+  navigation disagreed with the version switcher. Fixed for the shipped
+  v0.22 docs and closed permanently going forward by the docs-promote
+  tool's relabel step (f254).
+- **Mermaid diagram layout**: the vendored `accent-mmdr` renderer
+  advanced through three patch releases (0.3.0 -> 0.3.2), fixing edges
+  that crossed through subgraph titles, edges into adjacent terminal
+  markers (flowchart `((Done))` circles, state `[*]` end rings) that
+  routed as clipped hooks or squeezed diagonal staircases, and terminal
+  markers that overlapped their source node.
+- **Fresh dependency resolution could fail the build**: `lightningcss`
+  bumped to `1.0.0-alpha.72` -- the previous pin's loose
+  `parcel_selectors` requirement let any build that re-resolves
+  dependencies instead of honoring `Cargo.lock` (`cargo install` without
+  `--locked`, a build after `cargo update`) pick an incompatible
+  `parcel_selectors`/`cssparser` pair and fail to compile inside
+  `lightningcss`. Locked and fresh resolutions now agree.
+- **Toolchain and CI hardening, no released-binary impact**: the
+  workspace toolchain moved to Rust 1.97.1 (`rust-toolchain.toml`), which
+  also made an unattributed `clippy --lib --tests` false positive on the
+  lib test target stop reproducing (b110); every test-side `git` fixture
+  helper now disables commit signing, so the integration-test suite no
+  longer fails on a developer machine with a locked signing agent (b111);
+  and the Windows CI runner's persistent target directory now self-cleans
+  below 40 GB free, fixing a disk-exhaustion failure that the
+  toolchain/dependency bump triggered (b112).
+
 ## [0.22.1] - 2026-07-14
 
 A bugfix release. It completes the trial-license code removal that 0.22.0
