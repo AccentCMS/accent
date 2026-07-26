@@ -22,6 +22,20 @@ need no license key at all.
 curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | sh
 ```
 
+Re-running the installer when Accent CMS is already current reports
+"Already up to date" and changes nothing. To reinstall or update in place,
+pass force -- note that in the piped form, flags must go to `sh`, not to
+`curl` (a flag placed after the URL is consumed by curl):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | sh -s -- --force
+# or, using the environment-variable form:
+curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | ACCENT_FORCE=1 sh
+```
+
+To install a specific version, use `--version v0.23.1` (via `sh -s --`) or
+`ACCENT_VERSION=v0.23.1`; the `v` prefix is optional.
+
 ### Windows (PowerShell)
 
 ```powershell
