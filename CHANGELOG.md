@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.1] - 2026-07-26
+
+A bugfix release for the v0.23 static-build and deployment surface. The
+unifying theme is serve/build parity: several links and assets that worked
+under `accent serve` were missing from `accent build` output and 404ed only
+on deployed sites, invisibly to `accent validate`.
+
+### Added
+
+- `accent build --strict-links`: a build-output link sweep resolves every
+  emitted internal href against the output tree (at any `base_path`,
+  including none). It warns by default and fails the build under the flag;
+  the docs and website deploy workflows now build with it, so a broken-link
+  regression fails the deploy instead of shipping 404s.
+
+### Fixed
+
+- Default theme under `site.base_path`: the top menu and the docs sidebar
+  (both its versioned and non-versioned branches) rendered empty on every
+  sub-path deployment, because the templates encoded root-relative URL
+  shape in their depth heuristics and the `version.root` template context
+  value never carried the base path. Nav depth is now measured against
+  `url('/')` and `version.root` is prefixed like every other context URL;
+  a regression fixture builds the embedded docs theme with and without a
+  base path.
+- Static-build link parity for three link classes that worked in `serve`
+  and 404ed on deployed sites: versionless URLs now get a meta-refresh stub
+  at every default-version page (previously only the versioning root);
+  internal relative links are absolutized at render time against both
+  authoring bases, so emitted hrefs no longer depend on the host's
+  trailing-slash behavior; and `accent validate` now flags all unresolvable
+  relative links, not just `.md`-suffixed ones (page-local file references
+  stay exempt). One long-broken source-tree-path link in the docs was
+  corrected across buckets, with frozen-bucket errata.
+- Page-local media in static builds: `accent build` now emits page-local
+  media files at their bare page URLs, mirroring the serve-time alias
+  exactly -- rendered pages win collisions, per-page `media.expose: false`
+  is honoured, sectioning directories and root-level orphan files are
+  covered, and `media.serve_at_page_url: false` disables both surfaces
+  consistently. The static-asset resolver now also rejects dot-prefixed
+  path components on both surfaces, and serve and build share a single
+  extension allowlist.
+- Copy-code button: copying a code block no longer prepends the button's
+  own label (`Copy`/`Copied!`) to the copied text.
+- install.sh now warns when a stale `accent` earlier in `PATH` shadows the
+  freshly installed binary, naming both paths and the remediation.
+- Release/deploy pipeline, no released-binary impact: the site deploy
+  workflows no longer race the release binary after a tag, and the release
+  publish job survives partial re-runs of the build matrix.
+
 ## [0.23.0] - 2026-07-25
 
 Sub-path deployment support lands: a static build (or a proxied `accent
