@@ -241,6 +241,31 @@ check_path() {
   esac
 }
 
+# --- Shadowing check ---
+#
+# The user's shell resolves `accent` by PATH order (plus its command
+# hash), not by what this installer just wrote. A stale accent earlier
+# in PATH -- a cargo-installed ~/.cargo/bin/accent is the common case --
+# silently shadows the fresh install, and `accent --version` keeps
+# reporting the old build while the user believes they upgraded. Surface
+# the mismatch with both paths and versions at install time.
+
+check_shadowing() {
+  RESOLVED=$(command -v accent 2>/dev/null || true)
+  [ -n "$RESOLVED" ] || return 0
+  [ "$RESOLVED" = "${INSTALL_DIR}/accent" ] && return 0
+  if [ "$RESOLVED" -ef "${INSTALL_DIR}/accent" ] 2>/dev/null; then
+    return 0
+  fi
+  SHADOW_VERSION=$("$RESOLVED" --version 2>/dev/null || echo "unknown version")
+  echo ""
+  echo "Warning: 'accent' currently resolves to a different binary:"
+  echo "  ${RESOLVED} (${SHADOW_VERSION})"
+  echo "which shadows the one just installed at ${INSTALL_DIR}/accent."
+  echo "Remove the shadowing binary or move ${INSTALL_DIR} earlier in your"
+  echo "PATH, then run 'hash -r' (bash/zsh) or restart your shell."
+}
+
 # --- Main ---
 
 main() {
@@ -253,6 +278,7 @@ main() {
   check_existing
   download_and_install
   check_path
+  check_shadowing
 
   echo ""
   echo "Installation complete! Run 'accent --version' to verify."
