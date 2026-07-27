@@ -42,6 +42,28 @@ To install a specific version, use `--version v0.23.1` (via `sh -s --`) or
 irm https://raw.githubusercontent.com/AccentCMS/accent/main/install.ps1 | iex
 ```
 
+Re-running the installer when Accent CMS is already current reports
+"Already up to date" and changes nothing. The piped form cannot receive
+parameters at all, so the installer honors environment variables set in
+the same session before the pipe:
+
+```powershell
+# Reinstall or update in place
+$env:ACCENT_FORCE = "1"; irm https://raw.githubusercontent.com/AccentCMS/accent/main/install.ps1 | iex
+
+# Install a specific version (the v prefix is optional)
+$env:ACCENT_VERSION = "v0.23.1"; irm https://raw.githubusercontent.com/AccentCMS/accent/main/install.ps1 | iex
+```
+
+`$env:ACCENT_FORCE` stays set for the rest of the session;
+`Remove-Item Env:ACCENT_FORCE` clears it. Any value other than empty or
+`"0"` counts as force. The parameterized form is also available, and an
+explicit parameter always wins over its environment variable:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/AccentCMS/accent/main/install.ps1))) -Version v0.23.1 -Force
+```
+
 ### Manual download
 
 Grab the archive for your platform from the
