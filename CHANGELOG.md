@@ -5,6 +5,652 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-08-14
+
+The plugin surface and the development server both change shape here, and both
+changes are breaking. Plugins now reach the host through a typed WIT capability
+instead of the `/_internal/*` HTTP bridge, which is removed -- mail and the data
+store work during `accent build` for the first time, and a plugin's data
+namespace is derived by the host, so one plugin can no longer read or overwrite
+another's. The registry those plugins install from has become the ecosystem hub,
+serving plugins, themes and starter templates as single signed archives under a
+document a pre-0.24 binary cannot read; upgrading is the only remedy. A bare
+`accent serve` now binds HTTPS and negotiates HTTP/2, so the live-reload stream
+no longer permanently occupies one of the six connections a browser allows per
+origin -- the cause of the reported intermittent hangs -- and `--no-tls` restores
+the previous behaviour exactly.
+
+Templating moves several behaviours onto Jinja2 semantics, and document models
+now govern the core frontmatter fields. The remainder is a broad correctness
+pass: serve-versus-build parity, config-reload safety, search indexing that no
+longer treats page markup as text, and a set of panics that used to take down a
+connection, a request path, or every request at once.
+
+### Added
+
+- **`build.routing` completes the generated Apache artifact, so it can finally
+  replace a hand-written one.** The routing directives accent emits are derived
+  -- they express the URL shape the build already committed to. Three more are
+  the opposite, knowable only to the operator: `error_document`,
+  `canonical_host`, and a `redirects` list. Without them a generated
+  `.htaccess` was not yet a complete substitute for a hand-maintained file,
+  which is why both of this project's own sites still copied one over the top
+  of the build output -- silently discarding the routing fix. Both sites now
+  generate their artifact instead, and neither deploy workflow can overwrite
+  it. `canonical_host` 301s the host's www/apex counterpart (not every other
+  host, which would capture preview deployments); a redirect `to` starting with
+  `/` carries `base_path` while anything else is used verbatim. The block is
+  inert when absent, so an untouched site emits byte-identical output. Values
+  are validated at emit time -- a host carrying a scheme, a relative source, a
+  status outside 301/302/307/308, or whitespace in any argument fails the build
+  rather than writing a directive Apache would misread. The canonical-host rule
+  is emitted before the clean-URL rewrite, because mod_rewrite re-runs a
+  per-directory ruleset after an internal rewrite and the other order sends
+  `www/about` to `/about/index.html`. No equivalent exists for the `netlify`
+  target, whose redirects live in a `_redirects` file this generator does not
+  write, so configuring both fails closed rather than shipping a deployment
+  missing its rules. Verified end to end against Apache 2.4.66.
+
+- **The Apache `.htaccess` artifact now carries routing, not just headers.**
+  accent advertises no-slash URLs (`/about`, not `/about/`) in its sitemap,
+  feed, `llms.txt` and every page's `<link rel="canonical">`, but Apache's
+  `mod_dir` 301-redirects each of them to the slash form before serving --
+  so on an Apache host *every URL the sitemap listed was a redirect*, which
+  Search Console reports as "Page with redirect" instead of indexing the
+  page. The emitted file now turns that around and serves the advertised URL
+  directly, and adds `Options -Indexes` because the rewrite makes index-less
+  directories addressable. When the home page lives in a `home/` directory
+  and is therefore served at the site root as well, a `301` from `/home` to
+  `/` is emitted too, so only the advertised URL is reachable; a site with
+  its own page at `/` keeps both, since those are two different pages.
+  Requires `mod_rewrite` and `AllowOverride` covering `FileInfo` and
+  `Options`; a host without `mod_rewrite` keeps the previous redirect
+  behaviour rather than breaking, because the `DirectorySlash` change sits
+  inside the module guard. Only the `apache` target changes -- Netlify
+  already serves these URLs correctly. Verified end to end against Apache
+  2.4.64, at the site root and under a `base_path` sub-path deployment.
+
+- **`build.header_artifacts` carries your header configuration into a static
+  build.** Everything under `http_headers` used to be serve-only, because
+  `accent build` writes files and files carry no HTTP headers. On static
+  hosting the whole header story silently evaporated: the security headers
+  (nosniff, frame options, referrer policy, the page and strict-media CSPs),
+  cache-control policy, and the attachment semantics that make a published
+  `.sh` download instead of rendering. The last of those is not a nicety --
+  the force-download protection against scriptable SVGs is an XSS defence, and
+  it was absent from every static deploy. Nothing reported the gap, because
+  `accent validate` and dev `serve` both model the serve runtime.
+
+  ```yaml
+  build:
+    header_artifacts: ["netlify", "apache"]   # default: [] -- emit nothing
+  ```
+
+  `netlify` writes `_headers` (the dialect Netlify and Cloudflare Pages
+  share), `apache` writes `.htaccess` (`mod_headers` directives). Both are
+  generated from the same `http_headers` config `serve` reads, so there is one
+  source of truth and no hand-maintained copy to drift, and both respect
+  `base_path`. The default emits nothing, so an untouched site builds exactly
+  as before.
+
+- **`accent package --trust <official|verified|community>`.** The manifest's
+  provenance tier is now settable, defaulting to `community` exactly as before.
+  It used to be hard-coded, which meant every first-party submission had to
+  hand-edit a generated document whose whole point is to be machine-produced,
+  machine-checked, hashed and signed. Hard-coding it stopped nobody either --
+  the field is a line of JSON. What actually decides the outcome is unchanged
+  and lives in the registry: `official` requires the entry's repository to be
+  owned by the `AccentCMS` organisation, `verified` an author record the
+  maintainers have marked identity-verified, and a claim that fails is rejected
+  rather than downgraded. The command now says what each non-default tier
+  requires at the moment it writes the claim, so an unqualified submitter learns
+  it before CI tells them.
+
+- **`island:` directives accept a namespaced component name.** A plugin island
+  declared as `my-plugin:word-count` can now be used from content as
+  ```` ```island:my-plugin:word-count ````. One namespace prefix is allowed and
+  each half accepts letters, digits, `-` and `_` only, so a component name still
+  cannot become a path. Namespacing is what `accent package` and the registry's
+  checks have always recommended -- island components register into one global
+  registry per page and the loader resolves them last-registration-wins, so a
+  plugin island and a theme island sharing a bare name collide silently -- and
+  the directive could not express it until now.
+
+- **TCP keep-alive on the `accent serve` listeners.** A client that disappears
+  without closing its connection -- a slept laptop, Wi-Fi power-save, a NAT
+  rebinding, a crashed browser tab -- used to leave the server-side socket
+  `ESTABLISHED` until the OS retransmission timeout fired, typically 16 minutes
+  or more, holding a descriptor and stalling anything written to it (a
+  hot-reload event, for instance). Both the HTTP and HTTPS listeners now enable
+  keep-alive probes, and so does every connection they accept: idle 60s, probe
+  every 10s, dead after 3 unanswered probes, so a vanished peer is reaped in
+  about 90 seconds. HTTPS additionally sends an HTTP/2 `PING` every 30 seconds
+  with a 10-second acknowledgement deadline. No configuration; on by default. A
+  platform that refuses the socket option logs a warning at startup and serves
+  normally.
+
+- **Typed plugin host services (`host-services` capability).** Plugins now
+  send mail and use the data store through a typed WIT capability
+  (`send-mail`, `data-write`, `data-read`) instead of HTTP calls to the
+  server's own `/_internal/*` endpoints. The manifest opts in per service
+  with `host_services = ["mail", "data"]`; the data-store namespace is the
+  plugin's own name, derived by the host, so one plugin can no longer read or
+  overwrite another plugin's data. Host services also work during
+  `accent build`, where the HTTP bridge never could. The bundled
+  contact-form plugin is ported and no longer needs any network capability.
+
+### Removed
+
+- **The `/_internal/*` plugin HTTP bridge.** `/_internal/smtp/send`,
+  `/_internal/data/write`, and `/_internal/data/read` are gone, along with the
+  outbound-HTTP address-guard exemption that let a plugin reach them and the
+  `server_port` value the host injected into every plugin's config so it could
+  build the URL. **This is a breaking change for a plugin that sends mail or
+  stores data by POSTing to `http://127.0.0.1:{server_port}/_internal/...` with
+  `allowed_hosts = ["127.0.0.1"]`.** Such a plugin still loads, but the call is
+  refused by the address guard. The server warns at load time when a manifest
+  allowlists a host that could reach loopback (`localhost`, a loopback IP
+  literal, or the bare `*` wildcard), and that warning now states that such a
+  plugin's calls are already failing. Port to the `host-services` capability
+  above -- it needs no allowlist entry, no port, and no JSON envelope.
+
+  If your plugin used the data store, note that the capability derives the
+  namespace from the plugin's own name instead of taking it from the request.
+  A plugin that wrote under some other namespace must move its directory once
+  (`mv _data/<old-namespace> _data/<plugin-name>`) and repoint every
+  `load_data("<old-namespace>", ...)` call in its templates. Both fail silently
+  if missed -- a read from a namespace that does not exist returns nothing
+  rather than erroring. The third consequence does not: because the namespace
+  is now a directory name, a plugin that declares `host_services = ["data"]`
+  with a name that is not a legal namespace (lowercase `a-z`, `0-9`, `-`, `_`,
+  at most 128 characters) is **refused at load** with an error naming the rule,
+  rather than accepting submissions and dropping every one of them.
+
+  Removing the bridge also returns the outbound-HTTP address guard to an
+  unconditional non-public-address block: loopback is refused for every plugin
+  request, whatever the URL path.
+
+### Changed
+
+- **`accent serve` now uses HTTPS in development mode.** A bare `accent serve`
+  binds TLS with a self-signed certificate and negotiates HTTP/2, instead of
+  plain HTTP/1.1. The reason is the live-reload stream: it is a long-lived
+  server-sent-events response, and over HTTP/1.1 it permanently occupies one of
+  the six connections a browser opens per origin, leaving five for everything
+  else. Under a coincident reload-stream reconnect, a fresh navigation, and
+  parallel asset loads, a request could sit waiting for a free slot -- the
+  reported "sometimes a request just hangs". HTTP/2 multiplexes every stream
+  over one connection, so the contention does not exist.
+
+  **This is a breaking change to the default invocation.** A CI job, smoke
+  test, or script that runs `accent serve` and then fetches `http://…` must
+  either switch to `https://` (accepting a self-signed certificate) or add the
+  new **`--no-tls`** flag, which restores the old behaviour exactly.
+  `--no-tls` cannot be combined with `--tls`, `--cert`, or `--key`.
+
+  `accent serve --production` is **unchanged** and still binds plain HTTP --
+  deployments terminate TLS at a proxy that expects HTTP/1.1 upstream. Pass
+  `--tls` there to opt in, as before.
+
+  The certificate covers `localhost`, `127.0.0.1`, and the bind address, and
+  is **cached**, so the browser warning appears once rather than on every
+  restart: macOS `~/Library/Caches/dev.accentcms/dev-cert/`, Linux
+  `$XDG_CACHE_HOME/accentcms/dev-cert/`, Windows
+  `%LOCALAPPDATA%\accentcms\dev-cert\`. Set `ACCENTCMS_DEV_CERT_DIR` to store
+  it elsewhere -- test harnesses should point it at a scratch directory. On the
+  first start the server prints the certificate path together with the
+  platform-specific command that installs it into the trust store, which
+  removes the warning entirely. It is valid for a year and regenerates
+  automatically when it expires, when either file no longer matches its
+  recorded digest, or when it stops covering the host names in use.
+
+  A **wildcard bind** (`server.address: 0.0.0.0`, the documented way to reach
+  the dev server from another machine) is the one case Accent cannot infer:
+  it does not know which address the visitor will type, so the certificate
+  covers loopback only and a phone reports a name mismatch. The server warns
+  about this at startup; set **`ACCENTCMS_DEV_CERT_SANS`** (comma-separated)
+  to the address you will visit, or use `--no-tls`.
+
+  `accent serve --production --tls` also uses a self-signed certificate, but
+  **never writes it to disk** -- a production serving key does not belong in
+  a cache directory that eviction tooling and profile backups treat as
+  disposable. Each start mints a fresh one, exactly as before this change.
+
+  `accent serve-static` follows the same default, so a build checked with the
+  live server and with the static preview is reached over the same scheme.
+  It has no `--production`, so **`--no-tls` is the only way to get cleartext
+  there** -- a CI smoke test that curls `http://127.0.0.1:4403/...` after
+  `accent build` needs that flag added.
+
+  `accent serve --docs --production` is now **rejected**. It was always a
+  no-op (the embedded docs server has no production mode and the `--docs`
+  path never reached the license gate), and with the TLS default reading
+  `--production` its only remaining effect would have been an unannounced
+  switch to cleartext. Use `--docs --no-tls`.
+
+  Admin session cookies now carry `Secure` whenever the server is serving
+  TLS, not only under `--production`. A cookie minted over HTTPS without it
+  is one the browser will replay over plain HTTP to the same host.
+
+- **The plugin registry is now the ecosystem hub, and older binaries cannot
+  read it.** `AccentCMS/plugin-registry` has become `AccentCMS/hub-registry`,
+  and its v1 `registry.json` is deleted. One registry now serves plugins,
+  themes and starter templates, each version listed as a single checksummed,
+  signed archive rather than a set of loose files.
+
+  **A pre-0.24 `accent` fails against it**, with
+
+  ```
+  registry returned HTTP 404 Not Found: https://raw.githubusercontent.com/accentcms/plugin-registry/main/registry.json
+  ```
+
+  The remedy is to upgrade; there is no shim, and none is possible -- the two
+  formats share no document. Nothing was ever installed from v1: it never held
+  an entry, which is why the break was worth taking now rather than never. Its
+  successor is empty at first too, so `install` reports that an artifact is not
+  listed, which for the first time is a true statement rather than the only
+  answer the registry could give.
+
+  The registry URL also moved in configuration: `plugins.registry_url` is gone,
+  replaced by a top-level `hub.registry_url`. A config still carrying the old
+  key gets a startup warning naming the new one. Three per-kind URLs for one
+  registry would have been three chances to drift, and theme and template
+  installs must work in a build with no plugin runtime compiled in.
+
+- **Templating: booleans and none now print Jinja2-style.** The template engine
+  moves to MiniJinja 2.22, which spells printed primitives the way Jinja2 does:
+  `{{ some_boolean }}` renders `True` or `False` instead of `true`/`false`, and
+  a none renders `None` instead of `none`. **This is a breaking change for a
+  theme that prints a frontmatter boolean into markup** -- typically an HTML
+  attribute a script reads back (`data-featured="{{ page.custom.featured }}"`)
+  or a hand-built JSON literal. Both now carry a capitalised token that
+  `JSON.parse` rejects and a `=== "true"` comparison misses, and neither
+  errors, so the breakage is silent.
+
+  Fix by asking for the web spelling explicitly: `| lower` for attributes,
+  `| tojson` for JSON and `<script>` blocks.
+
+  ```jinja
+  <article data-featured="{{ page.custom.featured | lower }}">
+  <script type="application/json">{"featured": {{ page.custom.featured | tojson }}}</script>
+  ```
+
+  Only *printing* is affected -- `{% if page.custom.featured %}` is unchanged,
+  as is `| tojson` output, which was always correct JSON. No shipped Accent
+  theme prints a bare boolean, and a full 476-page build of the documentation
+  site was compared across the two versions with no rendered difference.
+- **Templating: string filters keep their input's safe marking.** `upper`,
+  `lower`, `title`, `capitalize`, `trim`, `replace`, `indent`, and `join` now
+  carry safety provenance through the transformation, so
+  `{{ page.content | safe | trim }}` is no longer re-escaped. `join` still
+  escapes unsafe items individually when the separator is safe.
+- **Templating: `split` returns a sequence.** Its result can be indexed from
+  the end and sliced without an intervening `| list`, so
+  `{{ page.url | trim("/") | split("/") | last }}` works.
+- **Templating: a `{% set %}` inside a `{% for %}` no longer leaks between
+  iterations.** Each iteration now starts with loop-local assignments unset,
+  matching Jinja2. A template that relied on the leak to carry a value forward
+  must use a `namespace()` instead.
+- **Document models now govern the core frontmatter fields.** `title`, `date`,
+  `author`, `lead`, `tags`, `status`, and the rest are declared by a built-in
+  model named `core` that every model inherits automatically. Declaring one of
+  them in your own `fields:` overrides the core declaration and is enforced --
+  `date: { required: true }` in a blog model finally blocks a dateless page
+  instead of doing nothing.
+
+  **This is a breaking change for sites whose models already list core fields.**
+  Those declarations were silently inert; they now take effect, so a site may
+  see a burst of validation issues on legacy content. That is the fix working.
+  Review the reported pages, or relax the model, before upgrading a build that
+  runs with `content.validation.mode: strict`.
+
+  A few smaller consequences:
+
+  - A model may **constrain** a core field but not **retype** one -- `title`
+    holds a string, `tags` holds a list. A model declaring
+    `title: { type: number }` is now refused at load time, with the other
+    models around it unaffected. Inside `module_models:`, where a name like
+    `media` may well mean something local, only the offending field is
+    dropped: the module's other fields keep validating and the build stays
+    green. `core` is a reserved model name, but `extends: core` is accepted --
+    it says explicitly what every model does implicitly.
+  - `required: true` on `title` or `lead` asks for a value the author wrote.
+    Accent fills both in when they are omitted (`title` from the first heading
+    or the filename, `lead` from the opening paragraph), and a filled-in value
+    does not satisfy the demand.
+  - A `date:` is validated against the same formats the loader accepts, so
+    `March 15, 2026` and `15.03.2026` pass a `type: date` check exactly as they
+    already load.
+  - A `defaults:` entry for a core field that always has a value (`status`,
+    `published`, `anchors`, `process`) never fires, because such a field is
+    never absent. Publishing status is owned by the workflow, not by a model
+    file.
+
+- Field definitions accept `editable: false`, which keeps a field out of the
+  admin editor's form pane while leaving it validated and available to
+  templates. A new `type: any` declares a key whose shape is genuinely open.
+
+- The admin editor's form pane renders the page's model rather than a
+  hand-maintained widget list, so a model that relabels or requires a core
+  field is reflected in the form. An input left empty now clears its
+  frontmatter key instead of writing an empty value, and a value the author
+  did not change is not materialised into the file -- an untouched Lead no
+  longer freezes the excerpt derived from the body. Two exceptions keep those
+  rules from destroying content: an empty Title leaves the stored title alone
+  (the box is never empty when the form opens, so an empty one is a mistake,
+  not an instruction), and a value the model marks `required` is written even
+  when the author did not change it. A frontmatter value the form cannot
+  display -- a nested block the schema does not name -- is no longer offered as
+  an empty text input, so saving cannot silently delete it.
+
+  Because the form pane now renders the whole model, the body field sits behind
+  every frontmatter control. The editor gained a **Skip to body editor** bypass
+  as its first focusable element -- invisible until focused -- and pressing Esc
+  in the body now lands on the Save button instead of dropping focus onto the
+  page. Reaching the body and reaching Save are one keystroke each again.
+
+### Fixed
+
+- **A panic while a plugin reload held the registry lock could 500 the whole
+  site, permanently.** `AppState::plugins` is read on the way through every
+  page request; a `std::sync::RwLock` is poisoned for the life of the process
+  once a thread panics while holding it exclusively, and every read site then
+  aborted -- which, with the catch-panic guard also new in this release, meant
+  a `500` for every page from a server that kept accepting connections and
+  passing its health probe. Dev hot reload held that write guard across
+  reading a plugin's `.wasm`, parsing its `plugin.toml`, and compiling and
+  instantiating a Wasmtime component: the largest body of fallible work in the
+  tree, in the position where a panic did the most damage, running on every
+  plugin file change. Loading a plugin is now two phases -- compile first,
+  with the registry lock released entirely, then swap under it -- and the
+  registry lock recovers from poisoning instead of aborting, logging one error
+  naming the lock the first time it does. What the swap displaces is torn down
+  after the guard is released, not under it, and registry teardown on a config
+  reload moved off the guard too. Three things improve on the way past: a
+  plugin recompile no longer stalls requests while it runs (it also no longer
+  occupies an async worker thread), a hot reload whose replacement does not
+  compile leaves the previously loaded plugin serving instead of removing it
+  first and failing into a gap, and one save that rewrites both `plugin.toml`
+  and `plugin.wasm` recompiles the plugin once rather than twice.
+
+- **The homepage is advertised at the root, not at `/home`.** A home page
+  living in a `home/` directory is reachable at two URLs -- its authoring
+  URL, and the site root, which `accent serve` resolves through it and
+  `accent build` writes the root `index.html` from. Both return 200 with the
+  same content, and `sitemap.xml` listed the authoring one, endorsing the
+  duplicate and pointing search engines away from the URL a reader visits.
+  Both sitemaps (serve and build) now list the root, and themes get a new
+  `page.canonical_url` for `<link rel="canonical">` and `og:url` so the tag
+  agrees with the sitemap entry naming it -- the two are produced by
+  different code, and disagreeing was worse than either form alone. Both
+  bundled themes are updated; a theme still reading `page.url` for its
+  canonical tag keeps the old value. Unaffected unless your homepage lives
+  in a `home/` directory *and* no page maps `/`: a site with both keeps two
+  distinct pages with two distinct URLs.
+
+  Extended to the remaining outward-facing surfaces: `feed.xml` item links
+  (a reader that de-duplicates by link would otherwise treat the two URLs as
+  different articles), `llms.txt` and `llms-full.txt`, and the JSON-LD
+  `url`/`mainEntityOfPage`/breadcrumb entries.
+
+  `accent serve` now also **301s `/home` to `/`**, so the duplicate is gone
+  rather than merely unadvertised. Both forms take a single hop: `/home/`
+  lands on `/` directly rather than passing through `/home`. Static
+  deployments get the same redirect from the generated `.htaccess`.
+
+- **Admin page lists no longer reorder between renders.** Sorting by a field
+  that two pages share -- the same modified time, the same date, the same
+  title -- left their relative order to `HashMap` iteration, which is
+  re-randomised every time the content index is built. The dashboard's
+  *Recent* list was the visible one, and the tie is the ordinary case rather
+  than the exotic one: a checkout, a sync or a generator stamps many files
+  with one mtime, and on a filesystem coarser than APFS two files written
+  back to back are already equal. URL now breaks every tie, as it always did
+  for menu-ordered lists.
+
+- **A panicking request answers `500` instead of dropping the connection.**
+  Nothing sat between the render and the socket, so a panic in a filter, a
+  template function, or the markdown pipeline unwound the connection task
+  without writing any HTTP response at all -- the client saw a reset or an
+  empty reply, which reads as a network fault and sends the operator to the
+  proxy or the TLS terminator before the renderer. Both `accent serve` and
+  `accent serve-static` now answer a typed `500` carrying the site's normal
+  security, CORS and cache headers, and log the panic with the request method
+  and public path; the panic hook still writes its backtrace, so the location
+  and the URL that reached it are both on record. No known panic path remains
+  in the render pipeline -- this is containment for the next one, and it
+  covers every route, every middleware layer, and the sub-path URL mapper.
+  `accent build` gained the equivalent for every phase that renders a
+  template: a panic now ends the build with `rendering page '/docs/...'
+  panicked: ...`, or the name of the pass it happened in (taxonomy, feeds,
+  sitemap, error pages), instead of a backtrace naming nothing. The build
+  still fails rather than skipping the page, deliberately: a deployable tree
+  silently missing a page is worse than no tree.
+
+- **A packaged template keeps its `.gitignore`.** The template contents list
+  had no place for a root ignore file, so packaging one reported it as *"not
+  part of a template artifact"* and left it out. The same starter then
+  scaffolded two different projects -- present via the copy embedded in the
+  binary, absent via a registry install -- and the registry-scaffolded one
+  committed its own caches and build output the first time its author ran `git
+  add -A`, which is the state the file exists to prevent, at the moment a new
+  user is least able to notice it. A template may now carry one, and should:
+  its contents become the user's project. A plugin or a theme installs into a
+  subdirectory of a project that already has an ignore file, so a root
+  `.gitignore` is still not part of either. Ignore files inside an included
+  directory -- a theme's `assets/.gitignore` -- were always archived and still
+  are.
+
+- **`accent package` no longer leaves untracked output in your repository.**
+  Its `--out` default, `dist/`, is now ignored in this repository, and the
+  publishing guide tells artifact authors to ignore it in theirs. An archive is
+  a few tens of kilobytes, so nobody notices it until it is in a commit.
+
+- **The registry's admission gate no longer reports a missing artifact as a
+  host outage** (`hub-registry` 0.3.0). An `artifact.url` returning 404 or 410
+  was classed `artifact/unreachable`, the category whose CI message reads *"this
+  is not a rejection -- re-run this job when the host is back"*. It is a
+  rejection: the host answered, and it will answer the same way forever. That
+  landed on the most common first-time mistake -- opening the submission before
+  uploading the release -- and told the submitter the one thing guaranteed not
+  to help. A 404 or 410 is now `artifact/not-published` and names both causes
+  (the release is not uploaded, or `artifact.url` points elsewhere); connection
+  failures, timeouts and 5xx keep the unreachable class and its own exit status.
+  Internally the HTTP status now survives a failed download instead of being
+  flattened into a message, which is what made the split possible without
+  parsing prose.
+
+- **`accent plugin install` says so when the project will not load what it just
+  installed.** A plugin installed into a project whose configuration leaves the
+  plugin system off is inert: the files are on disk and checksum-verified, no
+  hook runs, its routes 404, and any island it just advertised never hydrates.
+  Nothing errored, so there was no message to search for -- the user read
+  "Installed", saw the directory, and concluded the plugin or the CMS was
+  broken. It falls exactly on a new user's first day, because the `starter`
+  template ships the plugin block commented out. The install now prints a note
+  naming `plugins.enabled` and the config file to set it in. It stays a note and
+  not a refusal: installing into a project you intend to enable later is
+  legitimate.
+
+- **The bundled `accent-contact` plugin's islands are namespaced
+  (`accent-contact:word-count`, `accent-contact:reading-time`), shipped as
+  0.2.0.** The bare names it declared before are close to the likeliest names a
+  theme author would pick for the same two widgets, and the collision is silent
+  -- one registration overwrites the other and the page renders the wrong
+  component with no diagnostic. Both `accent package` and the registry's
+  validator warned about it, on the first `official` plugin in the catalog: the
+  artifact a third party reads to learn what a well-formed plugin looks like was
+  demonstrating what our own tooling tells them not to do. **If you used the
+  0.1.0 island names in content, update the directives when you upgrade.** The
+  published 0.1.0 manifest is immutable and untouched.
+
+- **`accent build` no longer deletes markup that follows a media URL.** The
+  build's media-URL scanner ended its query capture at a double quote or
+  whitespace and nothing else, while scanning whole HTML files rather than
+  just attribute values. A `/media/...?w=...` URL written in HTML **text
+  content** (a page documenting the query syntax, say) or inside a
+  **single-quoted attribute** therefore swallowed the markup that followed it,
+  and the rewrite -- which replaces the whole match with the variant filename
+  -- dropped that markup from the built page. `<img src='/media/hero.jpg?w=960'>`
+  lost its closing quote and `>`; a code span lost its `</code>`. It was silent
+  because only queries that parse cleanly reach the rewrite, and the query
+  parameters accepting free-form strings (`fit`, `fmt`, `thumb`) parse happily
+  with a tag glued on. Affects `accent build` only when media processing is
+  enabled and at least one variant is generated; `accent serve` processes media
+  on the fly and was never affected. Double-quoted attributes, the common case,
+  were always correct.
+
+- **`page.prev` / `page.next` no longer skip pages or disagree with
+  `page.siblings`.** Prev/next ordered the sibling sequence by `menu.order`
+  and then by **title**, while the hierarchy index -- which `page.siblings`,
+  `page.children` and every listing read -- orders the same sequence by
+  `menu.order` and then by **URL**. The tiebreaker only fires when siblings
+  share a `menu.order`, so numbered content trees were never affected; but a
+  flat directory without numeric filename prefixes gives every page order `0`,
+  and there prev/next followed the prose of each page's title instead. Pages
+  were skipped, the two navigations on a single page stepped through the same
+  siblings in different orders, and prev/next reported a different "last page"
+  than the sidebar. Prev/next now reads the ordered child list from the index
+  rather than re-deriving it, so the two orders cannot drift apart. A sibling
+  the reader cannot see -- an archived page, or a draft outside
+  `dev.show_drafts` -- is stepped over rather than ending the sequence, again
+  matching what the listing beside it shows.
+
+  **This changes prev/next ordering** on any site where sibling pages share a
+  `menu.order` -- it now matches what listings on the same page already
+  showed. Sites whose sections carry distinct `menu.order` values, including
+  every numeric-prefixed tree, are unaffected.
+
+- **A page's lead is published as plain text, so its meta description reads as
+  a sentence.** A lead becomes `<meta name="description">`, `og:description`,
+  `twitter:description`, the page's `llms.txt` entry, its RSS item description,
+  its entry in the JSON APIs, and whatever a theme shows in a listing -- none
+  of which can render markup, and several of which escape nothing at all. It is
+  now plain text at every one of them.
+
+  Two things were wrong. When a page has no `lead:`, Accent CMS derives one
+  from the first paragraph, and that derivation stripped markdown but not HTML:
+  a page whose body opens with a layout block (`<header>`, a hero `<div>`) got
+  a lead made entirely of tags, and not even its own prose, since the block
+  *is* the first paragraph and the real opening sentence never entered the
+  excerpt. Raw HTML is now removed before the paragraph is chosen, so an
+  opening block with no visible text is skipped entirely and the excerpt comes
+  from the first real sentence below it. Separately, a `lead:` written by hand
+  was passed through with its markup intact, which reached feeds, `llms.txt`
+  and generated markdown raw.
+
+  HTML you are *documenting* still survives: markup inside a fenced block, an
+  indented block, or an inline code span is kept, the same guarantee the search
+  index already made. **Your content files are never rewritten** -- the strip
+  applies to the published view, so a `lead:` you wrote stays exactly as typed
+  in your frontmatter and in the editor.
+
+  **This changes published output**: meta descriptions, social-card
+  descriptions, `llms.txt` entries and feed item descriptions change on the
+  next build of any site with such a page.
+- **Theme assets serve the right `Content-Type` again -- `.woff2` and
+  `.webmanifest` in particular.** The theme-asset route misspelled `woff2` as
+  `wof2` in both the extension and the media type, so the arm matched nothing
+  and every WOFF2 font a theme self-hosts was served as
+  `application/octet-stream`; `.webmanifest`, `.webp` and `.avif` had no entry
+  at all. The misspelling had also reached the cache-policy table, which
+  matched the same phantom type and had no `font/woff2` arm, so fonts missed
+  the year-long `immutable` policy meant for exactly them. Browsers sniff
+  fonts and generally loaded them anyway -- unless the site sends
+  `X-Content-Type-Options: nosniff` -- but proxies and CDNs select compression
+  by media type, so a mislabelled font or manifest also shipped uncompressed.
+  Static builds behind a normal web server were never affected: the host
+  supplies its own mapping, and the generated `_headers`/`.htaccess` files
+  carry cache policy rather than content types -- they are unchanged. The
+  theme route, the page-sibling static-asset route and the build's
+  header-artifact generator now share one extension table, so an extension
+  added for one is typed for all; what each route may *serve* is unchanged.
+  Two smaller corrections ride along: `.js` is now `text/javascript`
+  (RFC 9239 obsoletes `application/javascript`), and `.mjs` is recognised.
+- **A config reload no longer switches dev features back on in production.**
+  `--production` disables hot reload, browser reload, the debug query
+  parameter, and draft visibility, but it did so exactly once, when the CLI
+  arguments were applied. A `SIGHUP` (or `POST /_admin/reload`) re-read
+  `config.yaml` from disk and put all four back -- and because `hot_reload` and
+  `browser_reload` default to on, a config that simply never mentions them was
+  enough. The visible symptoms ranged from a production server quietly serving
+  unpublished draft pages, to fingerprinted stylesheets failing Subresource
+  Integrity checks in the browser because the reloaded config flipped the asset
+  pipeline to its unminified output while the `integrity` attributes still
+  described the minified bytes. A reload now re-applies the production clamp
+  before anything reads the new config, and warns when an explicitly-set
+  `dev.debug` or `dev.show_drafts` is overridden; a production server also
+  refuses to start a file watcher at all.
+- **A config reload no longer discards the path and theme command-line
+  flags.** `--theme`, `--theme-dir`, `--content-dir`, and `--site-dir` were
+  applied to the config once at startup and appear nowhere in `config.yaml`,
+  so a `SIGHUP` reverted to whatever the file said. A server started with
+  `--theme dark` against a config naming `default` silently swapped its entire
+  live theme on the first reload -- including reloads triggered incidentally
+  by a deploy hook or `systemctl reload`. The overrides are now replayed on
+  every reload. `--address` and `--port` are deliberately not replayed: the
+  listener is already bound, so changing those still needs a restart.
+- **A config reload no longer serves mismatched asset bytes while it
+  finishes.** The reload published the new fingerprint manifest and template
+  engine well before it cleared the page and style caches -- a gap that
+  spanned the plugin-registry rebuild, so seconds on a site with WASM plugins.
+  During it, cached pages referenced hashed URLs the new manifest could not
+  resolve (404), and freshly rendered pages could be answered from the stale
+  style cache with pre-reload bytes under a `Cache-Control: immutable`
+  content-addressed URL whose SRI hash no longer matched, pinning the wrong
+  bytes in browser and CDN caches. Theme, manifest, engine, and caches now
+  move together, after all fallible work has succeeded -- so a reload that
+  fails on a bad template also leaves the previous, self-consistent set live
+  instead of a half-applied mixture.
+- **Search results no longer render indexed page content as HTML.** The
+  client-side renderer built its result list by concatenating the indexed title
+  and snippet straight into `innerHTML`, so raw HTML in a page body became live
+  elements in the results: the browser re-nested the following results inside
+  them, which showed up as phantom results with missing titles and a result
+  list the arrow keys could not walk. Where page authorship is not fully
+  trusted it was also a stored-XSS path -- a page body could run script in the
+  session of anyone who searched. Titles and snippets are now escaped, with
+  query highlighting applied on top, so markup in content is displayed as text.
+  Affects both search backends, which share the renderer.
+- **Raw HTML in a page body is no longer indexed as searchable text.** Tags,
+  HTML comments, and `<script>`/`<style>` bodies are dropped before the text is
+  tokenized, so `div`, `class` and `header` are no longer search terms on every
+  page that uses them for layout, and result snippets show prose rather than
+  markup -- including on pages with no `lead:` of their own, whose snippet is
+  derived from the first paragraph. HTML inside a code block or an inline code
+  span is kept, so a page documenting `<div>` stays findable by searching
+  `div`; this covers four-space indented blocks as well as fenced ones. Only
+  what the renderer treats as markup is removed, so angle brackets your page
+  actually displays -- `a < b`, or an example written as `<angle brackets ...`
+  -- remain searchable as the words they are.
+- The `truncate` filter no longer panics when the cut falls inside a multi-byte
+  character. Its length now counts characters rather than bytes, so
+  `{{ page.title | truncate(60) }}` keeps 60 characters of an accented, CJK, or
+  emoji-bearing title instead of crashing the render. Text at or below the
+  limit is also returned whole now -- the byte comparison used to append an
+  ellipsis to a non-ASCII string that already fit.
+- Template rendering no longer panics when a comparison has no lossless common
+  representation (such as a float against an integer too large for `f64`), and
+  no longer overflows the stack on repeated sequence concatenation. Iteration
+  over map items is faster. A Python-compatible dict method is no longer
+  shadowed by a map key of the same name. All four come from the MiniJinja 2.22
+  upgrade.
+- The page meta description now falls back to the typed `lead:` frontmatter
+  field as documented. It previously consulted only custom frontmatter, so a
+  page with a `lead:` got the site-wide description instead. `page.lead` is
+  also exposed to templates for the first time.
+- A model constraining a module field, a taxonomy field, or a filename pattern
+  field by a core name resolved it against custom frontmatter, where core
+  fields never appear -- reporting a module's `title` as missing, reading a
+  core-named taxonomy field as empty, and skipping `{date}` filename
+  cross-checks. All three resolve through the same accessor now.
+- `accent new` resolves `{date}` and `{title}` filename-pattern tokens against
+  the frontmatter it is about to write.
+- `accent validate` no longer flags a link to `/` as broken when the home page
+  lives in a `home/` directory. Both `accent serve` and `accent build` serve
+  that page at the root, so the internal-link check now applies the same rule;
+  a draft home page reports its status at info level instead.
+
 ## [0.23.1] - 2026-07-26
 
 A bugfix release for the v0.23 static-build and deployment surface. The
