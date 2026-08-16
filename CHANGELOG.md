@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-08-16
+
+A bugfix release for the v0.24 line. The reason for it is the plugin
+host-services defect below: a contact form against any real mail relay
+delivered the message and then reported it to the visitor as a failure, so
+the natural response -- submit again -- delivered a duplicate. It is invisible
+in every local setup, because a local mail catcher answers fast enough to stay
+inside the budget.
+
+Cut from a maintenance branch off the `v0.24.0` tag rather than from `master`,
+so it carries these fixes and none of the 0.25 development work. Anyone whose
+licence ceiling is 0.24 can take it.
+
+### Fixed
+
+- Plugin `host-services` calls no longer trap the guest for time it spends
+  waiting on the host. The per-call budget was wall-clock, and the epoch
+  ticker kept counting while the guest sat suspended in `send-mail` or a
+  data-store write, so a relay that took longer than 50ms -- which is every
+  real relay, once TCP, STARTTLS, authentication and the remote `250` are in
+  the path -- killed the guest on its next instruction with the send already
+  committed. The budget now meters guest execution: a plugin is credited the
+  time it was suspended, while a plugin spinning in its own code still trips
+  the deadline exactly as before.
+- `plugins.render_budget_ms` (default `50`) exposes that budget in
+  `config.yaml` for the first time. It was previously unreachable, and the
+  plausibly named `plugins.timeout_ms` is really `diagrams.plugins.timeout_ms`
+  -- a different subsystem, governing diagram rendering -- so setting it had
+  no effect on a route handler and left no further lead.
+- Markdown: `~` written for "approximately" no longer renders as subscript.
+  Two unescaped tildes in one paragraph paired into a `<sub>` span that
+  swallowed the text between them and stranded the surrounding `**` as
+  literal asterisks, which reached published documentation. A subscript span
+  containing whitespace is now left as written; `H~2~O` and `CO~2~` are
+  unaffected.
+- The bundled documentation theme (`accent init --docs`) is usable on a
+  phone. Its header did not collapse at any width and needed a 491px
+  viewport, so below that the search button and theme toggle sat off the
+  right edge, the page scrolled sideways, and every control was under the
+  44px touch minimum. The navigation now collapses into a disclosure panel,
+  search keeps its place in the bar, and the documentation sidebar drawer
+  gained the keyboard and focus behaviour it was missing.
+
+### Changed
+
+- Subscript no longer spans whitespace. `~one word~` is still subscript;
+  `~several words~` now renders literally. This is stricter than the markdown
+  parser's own rule and is what makes the "approximately" fix possible.
+
 ## [0.24.0] - 2026-08-14
 
 The plugin surface and the development server both change shape here, and both
