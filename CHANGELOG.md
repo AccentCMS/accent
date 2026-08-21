@@ -5,6 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-08-21
+
+The hub becomes usable from the command line. 0.24 turned the plugin registry
+into an ecosystem hub and gave the binary the client to read it; this release
+finishes the loop -- themes install from it, plugins and themes report when
+they are behind it, `accent init --template` discovers starter templates
+through it, and a retracted artifact is refused rather than quietly installed.
+It also gains the half of the commerce contract that was missing: a paid
+artifact downloads freely and is verified at the point of use, so a third party
+can list one and charge for it.
+
+`hub.accentcms.dev` goes live alongside this release as the catalog those
+commands read, generated from the same registry documents by the same engine.
+The three sites -- product, documentation, hub -- now navigate as one.
+
+Under the plugin runtime, Wasmtime moves to the 48.0.0 LTS line, which carries
+24 months of guaranteed security backports where an ordinary release gets two.
+That was the runtime target from the start and it is the last item of the
+Component-Model replacement epic.
+
+### Added
+
+- **`accent theme install <name>`, and themes in the hub.** Themes install from
+  the registry the way plugins already did, with the same vendor-key pinning
+  and the same `--allow-unverified` escape hatch. `accent theme list --remote`
+  reads the registry, `theme info` shows an artifact's detail, and `theme
+  outdated` reports what has moved on.
+
+- **`accent plugin update`, `plugin outdated`, and `plugin search`.** An
+  installed artifact can now tell you it is behind, and you can find one
+  without opening a browser. `search` reads the mirrored registry index, so it
+  works against whatever the hub last published.
+
+- **Retraction is honoured end to end.** A retracted version is refused at
+  install and reported by `outdated`, so a artifact withdrawn for a defect or a
+  security problem stops spreading rather than remaining installable until
+  someone notices.
+
+- **`accent init --template <name>` discovers starter templates through the
+  registry.** The built-in templates still ship; the registry adds to them
+  rather than replacing them, and `--list` shows both.
+
+- **Commercial artifacts are verified where they are used, not where they are
+  downloaded.** A paid plugin, theme or template downloads freely and is
+  checked at the point of use -- a plugin at component load, a theme at
+  activation, a template before scaffolding -- against a vendor-signed licence.
+  A missing or wrong licence is refused with the reason named. This is the
+  scheme m053 specified and only half of which shipped.
+
+- **`load_data()` works during `accent build`.** The template function that
+  reads a site's data files now runs in static builds, not only under `accent
+  serve`, which is what lets a generated catalog be built at all.
+
+- **Scheduled link health.** A site's link index can now be re-checked on a
+  schedule, so a link that rots after publication is noticed rather than
+  waiting for a reader to find it.
+
+- **`accent license buy --cadence <yearly|monthly>`.** The purchase flow
+  carries the billing cadence, which selects the product; yearly (owned)
+  remains the default.
+
+### Changed
+
+- **The plugin runtime moves to Wasmtime 48.0.0 LTS.** LTS releases carry a
+  24-month support window with guaranteed security backports, against two
+  months for an ordinary major -- which is the reason this line was the target
+  for a runtime that executes third-party code. It also brings Cranelift
+  dead-store elimination and, on Linux, `process_madvise` for the pooling
+  allocator. Plugin sandbox semantics are unchanged: Wasmtime collapsed its
+  separate directory and file permission flags into one read-only/read-write
+  choice per grant, which is exactly the distinction Accent's grants already
+  made.
+
+- **`accent license buy` and `license renew` go through the issuance service.**
+  They previously opened a hardcoded payment-provider URL. The service is what
+  creates the checkout, signs the key, and hands it back to the waiting
+  command, so the binary never talks to the payment provider directly and never
+  holds a signing key. `renew` now opens a checkout for the edition and cadence
+  of the current licence; if a subscription has already renewed, the new key is
+  emailed and `accent license activate` installs it.
+
+- **Dependency updates.** `h2` (see below), `moka` 0.12.16, `rmcp` 3.1.3,
+  `rustls-webpki` 0.103.14, and the `wasm-tools` family.
+
+### Fixed
+
+- **A cache defect that shrank capacity over time.** `moka` 0.12.16 fixes a
+  race that could leak a phantom entry slot on every occurrence, so a
+  long-running server's usable cache capacity fell below its configured maximum
+  and its reported entry count drifted above the truth.
+
+- **`h2` denial-of-service advisory (RUSTSEC-2026-0258),** plus the follow-up
+  that made the fix's own frame limiter ignore end-of-stream frames -- without
+  which it could reject legitimate traffic.
+
+- **`llms.txt` no longer wastes a machine reader's budget.** Five defects in
+  one generator: a section's index page was published twice, as the heading and
+  again as the first entry; sections were ordered alphabetically by directory
+  rather than by the `menu.order` the navigation already uses, so the first
+  section a context-limited reader sees was arbitrary; a truncated section
+  looked identical to a complete one, so ten entries of a fifty-page section
+  read as the whole list; an authored `lead:` was cut mid-word at 120
+  characters; and `llms-full.txt` published HTML comments as visible text.
+
+- **An authored `description:` is used when there is no `lead:`.** A page
+  carrying a description no longer publishes a truncated body excerpt instead
+  of the sentence its author wrote. An authored `lead:` still wins where both
+  are set.
+
 ## [0.24.1] - 2026-08-16
 
 A bugfix release for the v0.24 line. The reason for it is the plugin
