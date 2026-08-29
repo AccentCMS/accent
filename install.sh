@@ -38,7 +38,10 @@
 #
 # There is one binary per platform: every download contains the full
 # feature set, and your license key decides which tier is unlocked at
-# runtime. Releases before v0.22.0 were never published here.
+# runtime. On Linux the installer picks between the glibc build and the
+# fully static musl build (Alpine and other musl-based distributions) by
+# detecting the system's libc; musl archives exist from v0.26.0 onward.
+# Releases before v0.22.0 were never published here.
 
 set -eu
 
@@ -113,9 +116,26 @@ detect_platform() {
       ;;
   esac
 
+  # Linux has two libc families and two release builds to match: glibc
+  # systems get the gnu build (glibc 2.28 floor), musl systems -- Alpine
+  # above all -- get the fully static musl build, which has no runtime
+  # requirements at all. The musl dynamic loader lives at a fixed,
+  # arch-named path, so its presence is the most reliable marker; ldd
+  # identifying itself as musl covers a layout that moved it. When
+  # neither marker is present, gnu stays the default, which is the
+  # correct answer on every glibc system.
+  LIBC="gnu"
+  if [ "$OS_NAME" = "linux" ]; then
+    if [ -e "/lib/ld-musl-${TARGET_ARCH}.so.1" ]; then
+      LIBC="musl"
+    elif ldd --version 2>&1 | grep -qi musl; then
+      LIBC="musl"
+    fi
+  fi
+
   case "${OS_NAME}-${TARGET_ARCH}" in
-    linux-x86_64)   TARGET="x86_64-unknown-linux-gnu" ;;
-    linux-aarch64)   TARGET="aarch64-unknown-linux-gnu" ;;
+    linux-x86_64)   TARGET="x86_64-unknown-linux-${LIBC}" ;;
+    linux-aarch64)   TARGET="aarch64-unknown-linux-${LIBC}" ;;
     macos-x86_64)   TARGET="x86_64-apple-darwin" ;;
     macos-aarch64)   TARGET="aarch64-apple-darwin" ;;
   esac
@@ -233,6 +253,13 @@ download_and_install() {
     echo ""
     echo "Check that the version exists (only v0.22.0 and later are published here):"
     echo "  https://github.com/${REPO}/releases"
+    case "$TARGET" in
+      *-musl)
+        echo ""
+        echo "Note: the musl (Alpine) archives are published from v0.26.0 onward;"
+        echo "earlier releases are glibc-only."
+        ;;
+    esac
     exit 1
   fi
 
@@ -330,8 +357,11 @@ verify_runs() {
     echo "  https://github.com/${REPO}/discussions"
   elif [ "$OS_NAME" = "linux" ] && ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
     echo ""
-    echo "The Linux binaries are built against glibc. Systems without it (Alpine and"
-    echo "other musl-based distributions) are not supported."
+    echo "This looks like a musl-based system (Alpine or similar), which the fully"
+    echo "static musl build supports; this installer selected ${TARGET}. If that is"
+    echo "not the musl build, or the musl build does not start here, the release is"
+    echo "at fault: please report it via"
+    echo "  https://github.com/${REPO}/discussions"
   fi
   echo "Nothing was installed; any earlier version at ${INSTALL_DIR}/accent is unchanged."
   exit 1

@@ -36,11 +36,13 @@ curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | 
 To install a specific version, use `--version v0.23.1` (via `sh -s --`) or
 `ACCENT_VERSION=v0.23.1`; the `v` prefix is optional.
 
-On Linux the binary needs glibc 2.28 or newer -- Debian 10, Ubuntu 20.04,
-RHEL 8 (and AlmaLinux and Rocky Linux 8), Amazon Linux 2023, and anything
-after them. The installer runs the binary once before installing it and
-stops, naming the glibc versions involved, if the system is older.
-musl-based distributions such as Alpine are not supported.
+On Linux the installer picks the build for your libc automatically. The
+glibc build needs glibc 2.28 or newer -- Debian 10, Ubuntu 20.04, RHEL 8
+(and AlmaLinux and Rocky Linux 8), Amazon Linux 2023, and anything after
+them. Alpine and other musl-based distributions get a fully static musl
+build with no runtime requirements at all (published from v0.26.0
+onward). The installer runs the binary once before installing it and
+stops, naming the versions involved, if the system cannot run it.
 
 ### Windows (PowerShell)
 
