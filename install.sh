@@ -19,6 +19,23 @@
 #   curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | ACCENT_VERSION=v0.22.0 sh
 # Versions are accepted with or without the v prefix (0.22.0 == v0.22.0).
 #
+# Verification is best effort by default: a checksums file or signature
+# that will not download, or a machine without gpg or sha256sum, produces
+# a warning and the install continues, because a hard failure over a
+# transient network error is the wrong trade for a person running a
+# one-liner on an unknown machine. A checksum or signature that is present
+# and WRONG always fails. In automation nobody reads the warning, so pass
+# --require-verify (or ACCENT_INSTALL_REQUIRE_VERIFY=1) to make every
+# skipped check a failure instead:
+#   ACCENT_INSTALL_REQUIRE_VERIFY=1 sh install.sh
+#
+# The binary is run once (`accent --version`) before it is installed. A
+# download can verify, unpack, and copy cleanly and still be a binary this
+# machine cannot start -- a Linux release that needs a newer glibc than the
+# system has fails exactly that way -- so a binary that does not run is
+# not installed, the previous installation (if any) is left in place, and
+# the error names the glibc versions involved.
+#
 # There is one binary per platform: every download contains the full
 # feature set, and your license key decides which tier is unlocked at
 # runtime. Releases before v0.22.0 were never published here.
@@ -30,11 +47,16 @@ INSTALL_DIR="${HOME}/.local/bin"
 
 # Env-var defaults, applied before argument parsing so an explicit CLI
 # flag always overrides. Any ACCENT_FORCE value other than empty or "0"
-# behaves like --force.
+# behaves like --force; the same rule applies to
+# ACCENT_INSTALL_REQUIRE_VERIFY and --require-verify.
 VERSION="${ACCENT_VERSION:-}"
 case "${ACCENT_FORCE:-}" in
   '' | 0) FORCE=0 ;;
   *)      FORCE=1 ;;
+esac
+case "${ACCENT_INSTALL_REQUIRE_VERIFY:-}" in
+  '' | 0) REQUIRE_VERIFY=0 ;;
+  *)      REQUIRE_VERIFY=1 ;;
 esac
 
 # --- Argument parsing ---
@@ -43,17 +65,22 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version)  VERSION="$2"; shift 2 ;;
     --force)    FORCE=1; shift ;;
+    --require-verify) REQUIRE_VERIFY=1; shift ;;
     --help)
-      echo "Usage: install.sh [--version VERSION] [--force]"
+      echo "Usage: install.sh [--version VERSION] [--force] [--require-verify]"
       echo ""
       echo "Options:"
       echo "  --version VERSION   Install a specific version (e.g., v0.22.0; the v prefix is optional)"
       echo "  --force             Overwrite existing installation without prompting"
+      echo "  --require-verify    Fail instead of warning when the checksum or signature cannot"
+      echo "                      be verified (missing checksums, signature, gpg, or sha256sum)."
+      echo "                      For CI and other unattended installs."
       echo ""
       echo "Environment variable equivalents (useful piped through curl | sh,"
       echo "where a flag placed after the URL is consumed by curl, not sh):"
-      echo "  ACCENT_VERSION      Same as --version"
-      echo "  ACCENT_FORCE        Any value other than empty or 0 is the same as --force"
+      echo "  ACCENT_VERSION                 Same as --version"
+      echo "  ACCENT_FORCE                   Any value other than empty or 0 is the same as --force"
+      echo "  ACCENT_INSTALL_REQUIRE_VERIFY  Any value other than empty or 0 is the same as --require-verify"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -196,7 +223,7 @@ download_and_install() {
   fi
 
   TMPDIR=$(mktemp -d)
-  trap 'rm -rf "$TMPDIR"' EXIT
+  trap cleanup EXIT
 
   echo "Downloading ${ARCHIVE_NAME}..."
   # shellcheck disable=SC2086  # $PROGRESS is always exactly one flag, never split
@@ -215,14 +242,14 @@ download_and_install() {
     echo "Verifying checksum..."
     EXPECTED=$(grep "${ARCHIVE_NAME}" "${TMPDIR}/checksums.txt" | awk '{print $1}')
     if [ -z "$EXPECTED" ]; then
-      echo "Warning: Archive not found in checksums file. Skipping verification."
+      skip_verification "Archive not found in checksums file." "verification"
     else
       if command -v sha256sum >/dev/null 2>&1; then
         ACTUAL=$(sha256sum "${TMPDIR}/${ARCHIVE_NAME}" | awk '{print $1}')
       elif command -v shasum >/dev/null 2>&1; then
         ACTUAL=$(shasum -a 256 "${TMPDIR}/${ARCHIVE_NAME}" | awk '{print $1}')
       else
-        echo "Warning: No sha256sum or shasum found. Skipping checksum verification."
+        skip_verification "No sha256sum or shasum found." "checksum verification"
         ACTUAL="$EXPECTED"
       fi
 
@@ -236,27 +263,107 @@ download_and_install() {
       echo "Checksum verified."
     fi
   else
-    echo "Warning: Could not download checksums. Skipping verification."
+    skip_verification "Could not download checksums." "verification"
   fi
 
   echo "Extracting..."
   tar -xzf "${TMPDIR}/${ARCHIVE_NAME}" -C "${TMPDIR}"
 
   mkdir -p "$INSTALL_DIR"
-  mv "${TMPDIR}/accent" "${INSTALL_DIR}/accent"
-  chmod +x "${INSTALL_DIR}/accent"
+  # Stage next to the final path rather than in ${TMPDIR}: the binary is
+  # executed once before it is installed (verify_runs), and a temp
+  # directory may be mounted noexec while ${INSTALL_DIR} by definition is
+  # not. The name is unique per run so two overlapping installs cannot
+  # clobber each other's staged file, and cleanup removes it on any exit,
+  # so an interrupted run leaves nothing behind. Only a binary that ran
+  # replaces whatever is installed, so a failed update leaves the
+  # previous version in place.
+  STAGED=$(mktemp "${INSTALL_DIR}/accent.new.XXXXXX")
+  mv -f "${TMPDIR}/accent" "$STAGED"
+  chmod +x "$STAGED"
+  verify_runs "$STAGED"
+  mv -f "$STAGED" "${INSTALL_DIR}/accent"
 
   echo "Installed accent to ${INSTALL_DIR}/accent"
 }
 
-# --- GPG signature verification (best effort) ---
+# --- Cleanup on every exit ---
+#
+# The download directory always goes. The staged binary goes too when it
+# is still there: on the success path the final mv has already renamed it
+# and on the failure path verify_runs already removed it, so this only
+# matters when the run was interrupted between the two.
+
+cleanup() {
+  rm -rf "$TMPDIR"
+  if [ -n "${STAGED:-}" ]; then
+    rm -f "$STAGED"
+  fi
+}
+
+# --- Run the binary before installing it ---
+#
+# Everything above proves the archive is the one we published; nothing
+# proves this machine can start what is inside it. The v0.25.0 Linux
+# release needed glibc 2.39 and refused to start on Debian 12 and Ubuntu
+# 22.04, while this script printed "Installation complete!" over it,
+# because it had never executed what it installed. So run `--version`
+# once on the staged file. A binary that does not run is removed, not
+# installed, and the message says why in the terms that matter: the glibc
+# this release wants and the glibc this system has.
+
+verify_runs() {
+  OUTPUT=$("$1" --version 2>&1) && {
+    echo "Verified: ${OUTPUT}"
+    return 0
+  }
+  rm -f "$1"
+  echo "Error: the downloaded binary cannot run on this system."
+  echo "$OUTPUT" | sed 's/^/  /'
+  NEEDED=$(echo "$OUTPUT" | grep -o "GLIBC_[0-9.]*' not found" | sed "s/GLIBC_//; s/' not found//" | sort -t. -k1,1n -k2,2n | tail -n1)
+  if [ -n "$NEEDED" ]; then
+    HAVE=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
+    echo ""
+    echo "This release needs glibc ${NEEDED} or newer; this system has glibc ${HAVE:-unknown}."
+    echo "The supported Linux versions are listed at https://accentcms.dev/download."
+    echo "If this system is one of them, the release is at fault: please report it via"
+    echo "  https://github.com/${REPO}/discussions"
+  elif [ "$OS_NAME" = "linux" ] && ! getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    echo ""
+    echo "The Linux binaries are built against glibc. Systems without it (Alpine and"
+    echo "other musl-based distributions) are not supported."
+  fi
+  echo "Nothing was installed; any earlier version at ${INSTALL_DIR}/accent is unchanged."
+  exit 1
+}
+
+# --- Skipped verification: warn, or fail under --require-verify ---
+#
+# Every path that would install without a completed check goes through
+# here, so the strict mode has exactly one definition. A check that ran
+# and FAILED never comes here; that is always fatal.
+
+skip_verification() {
+  if [ "$REQUIRE_VERIFY" -eq 1 ]; then
+    echo "Error: $1"
+    echo "Verification is required (--require-verify / ACCENT_INSTALL_REQUIRE_VERIFY=1); not installing an unverified binary."
+    exit 1
+  fi
+  echo "Warning: $1 Skipping $2."
+}
+
+# --- GPG signature verification (best effort by default) ---
 #
 # Every release's checksums file carries a detached GPG signature. When gpg
 # is available, verify it against the published release signing key; when it
-# is not, warn and fall back to checksum-only verification.
+# is not, warn and fall back to checksum-only verification. Under
+# --require-verify a missing gpg, signature, or key fails the install.
 
 verify_signature() {
   if ! command -v gpg >/dev/null 2>&1; then
+    if [ "$REQUIRE_VERIFY" -eq 1 ]; then
+      skip_verification "gpg not found, so the checksums signature cannot be verified." "signature verification"
+    fi
     echo "Note: gpg not found; skipping signature verification (checksums still checked)."
     return
   fi
@@ -265,11 +372,11 @@ verify_signature() {
   KEY_URL="https://raw.githubusercontent.com/${REPO}/main/release-signing-key.asc"
 
   if ! curl -fsSL -o "${TMPDIR}/checksums.txt.asc" "$SIG_URL"; then
-    echo "Warning: Could not download the checksums signature. Skipping signature verification."
+    skip_verification "Could not download the checksums signature." "signature verification"
     return
   fi
   if ! curl -fsSL -o "${TMPDIR}/release-signing-key.asc" "$KEY_URL"; then
-    echo "Warning: Could not download the release signing key. Skipping signature verification."
+    skip_verification "Could not download the release signing key." "signature verification"
     return
   fi
 

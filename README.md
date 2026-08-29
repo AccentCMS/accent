@@ -36,6 +36,12 @@ curl -fsSL https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh | 
 To install a specific version, use `--version v0.23.1` (via `sh -s --`) or
 `ACCENT_VERSION=v0.23.1`; the `v` prefix is optional.
 
+On Linux the binary needs glibc 2.28 or newer -- Debian 10, Ubuntu 20.04,
+RHEL 8 (and AlmaLinux and Rocky Linux 8), Amazon Linux 2023, and anything
+after them. The installer runs the binary once before installing it and
+stops, naming the glibc versions involved, if the system is older.
+musl-based distributions such as Alpine are not supported.
+
 ### Windows (PowerShell)
 
 ```powershell
@@ -104,7 +110,17 @@ sha256sum -c --ignore-missing checksums-<version>.txt
 ```
 
 The Linux/macOS install script performs both steps automatically when `gpg`
-is on your PATH, and always verifies the SHA-256 checksum.
+is on your PATH, and always verifies the SHA-256 checksum. If a check cannot
+run at all (the checksums or signature will not download, or `gpg` or
+`sha256sum` is missing), it warns and continues; a check that runs and fails
+always stops the install. For CI and other unattended installs, pass
+`--require-verify` (or set `ACCENT_INSTALL_REQUIRE_VERIFY=1`) so a check that
+cannot run fails the install too:
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/AccentCMS/accent/main/install.sh
+ACCENT_INSTALL_REQUIRE_VERIFY=1 sh install.sh
+```
 
 ### Publication attestation
 
