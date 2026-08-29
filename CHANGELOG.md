@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-08-29
+
+A bugfix release for the v0.25 line. The reason for it is the Linux release
+binaries: v0.25.0 was built against glibc 2.39 and refused to start on
+Debian 12 and Ubuntu 22.04, while the installers reported success over it
+(the installer side is fixed independently, in `install.sh` and `accentup`
+0.1.2). Alongside that, the fixes from master that change what the binary
+does -- a git-backed publisher whose files on disk stopped following the
+deploy branch, and two JSON API defects -- plus wasmtime 48.0.1.
+
+Cut from a maintenance branch off the `v0.25.0` tag rather than from
+`master`, so it carries these fixes and none of the 0.26 development work.
+Anyone whose licence ceiling is 0.25 can take it.
+
+### Fixed
+
+- The Linux release binaries run on Debian 10, Ubuntu 20.04, RHEL 8, Amazon
+  Linux 2023 and newer. v0.25.0 needed glibc 2.39 because both Linux targets
+  inherited the glibc of the image that built them (`ubuntu-latest` and the
+  cross-rs `main` image both moved to Ubuntu 24.04). Both targets are now
+  linked against a pinned glibc 2.28 floor, the release build checks the
+  produced binary against that floor, and a smoke job runs each Linux
+  archive on a glibc 2.28 base before anything is published. The aarch64
+  Linux binary also embeds the dependency SBOM now, like every other target.
+- A git-backed publisher's working tree follows the deploy branch. The
+  webhook fetched the branch and served markdown from the new commit, but
+  the files on disk -- media, page-local assets, the theme, document models
+  -- stayed at whatever the first clone produced, so a push that added a
+  page and an image served the page and returned 404 for the image
+  indefinitely. The checkout is now reset onto the fetched tip before the
+  reload, and again at boot, for the publisher role only; untracked files
+  survive.
+- The JSON API renders page content through the same pipeline as the HTML
+  page. `api.include_content` ran the bare markdown renderer, so shortcodes
+  (`[infobox]`, `[figure]`, `[tabs]`, diagrams) reached API consumers as
+  literal bracket text while the HTML page rendered them. Both `accent
+  serve` and the `accent build` output are covered.
+- The JSON API's page detail keeps its `files` list, and the static build no
+  longer drops error pages, redirect pages and rewrite targets from the API
+  output or keys a rewritten page under its target's URL.
+- Hot reload watches the project `models/` directory. Editing a document
+  model during `accent serve` now invalidates the index and reloads the
+  browser instead of serving the stale schema until an unrelated save.
+- `accent --version` reports the commit hash when the binary was built
+  outside a git checkout instead of an empty string.
+- A page miss on a public origin logs at debug rather than info, so
+  commodity scanner probes (`/wp-admin.php`, `/.env`, ...) no longer fill
+  the default log.
+
+### Changed
+
+- wasmtime 48.0.1 (from 48.0.0): context slots in component compositions
+  are managed correctly, and WASIp2 HTTP requests set the `Host` header by
+  default.
+
 ## [0.25.0] - 2026-08-21
 
 The hub becomes usable from the command line. 0.24 turned the plugin registry
