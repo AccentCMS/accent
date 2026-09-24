@@ -5,6 +5,827 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-09-24
+
+Scripts are locked down everywhere Accent renders a page. Served pages carry a
+per-response nonce, static builds carry script hashes, and the admin UI runs
+without `'unsafe-eval'`, so an injected script no longer runs. Custom themes
+with inline scripts or `onclick=`-style handlers need a one-line change per
+script; the entries below say what it is and how to find what breaks first.
+
+Components become a contract a theme can be checked against: canonical and
+builtin components, manifests that describe their attributes, and an editor
+that lists them. Plugins can declare their own Markdoc tags. Directory
+previews with `accent serve <dir>` turn into navigable sites with search.
+Releases add fully static Linux musl binaries for Alpine.
+
+Three changes need action when you upgrade:
+
+- **Plugin API 0.2.0.** A plugin built for 0.1.0 is refused at install and at
+  load. Run `accent plugin update <name>` for each installed plugin.
+- **`[shortcode]` syntax is removed.** Rewrite each one as a declared
+  component, `{% name %} ... {% /name %}`.
+- **A broken internal link fails `accent build`.** Pass `--lax` to report it
+  as a warning instead.
+
+The JSON REST API also moves in the static output layout; see Changed.
+
+### Added
+
+- **Served pages restrict scripts with a per-response nonce.** `accent serve`
+  now appends `script-src 'self' 'nonce-...'` to every page's
+  `Content-Security-Policy`, with a new nonce on every response and no
+  `'unsafe-inline'`. A script runs only when it comes from the site's own
+  origin or carries `nonce="{{ nonce }}"`, which every shipped theme now
+  writes on each `<script>`; inline `onclick=`-style handlers are blocked.
+  **Custom themes with inline scripts or handlers need the same change**: add
+  the attribute and move handlers into a script, or set
+  `http_headers.security.script_policy.report_only: true` to find what breaks
+  first, or `enabled: false` to opt out. A `<script>` in page content is
+  blocked on served pages. The admin UI and media keep the previous policy.
+- **The admin UI runs without `'unsafe-eval'`.** The admin now uses the
+  Alpine.js CSP build and htmx with `eval` turned off, and the editor preview
+  is a page of its own that carries the site's script policy, so a `<script>`
+  in a draft is blocked in the preview as it will be when published.
+  `/_admin/` gets the strict script policy, report-only for now through the
+  new `http_headers.security.script_policy.report_only_paths` (default
+  `["/_admin/*"]`); set it to `[]` to enforce. `script_policy.exclude` now
+  defaults to `[]`. A hotfix override of `alpine.min.js` must be the CSP build.
+- **Static builds restrict scripts too.** A built page has no response to
+  carry a nonce, so `accent build` records a `sha256` hash of each inline
+  script marked `nonce="{{ nonce }}"` and the origin of each marked script
+  from another host, then writes them into the page CSP of its header
+  artifacts; `accent serve-static` sends the same policy. Scripts in content,
+  and theme scripts without the attribute, are blocked in static output. The
+  build manifest format changed, so the first build after upgrading is a full
+  rebuild.
+
+- **The admin lists what a theme's components are, and the editor inserts
+  them.** `/_admin/components` is generated from the schema registry: each
+  component's origin, attributes and body kind, with a page per component
+  showing the call to insert and the markup its theme renders. A switcher reads
+  each theme in the theme directory. The page editor gains a **Components**
+  palette under the body toolbar that inserts a call with its required
+  attributes stubbed, into CodeMirror or the plain textarea.
+
+- **A component manifest declares what a `list` or `object` attribute holds.**
+  A `list` names its item type under `items:` and an `object` its fields under
+  `fields:`, nested up to eight deep, and `accent validate` checks every item
+  and field, naming the path to a value that does not match, such as
+  `links[1].label`. A `list` without `items:` or an `object` without `fields:`
+  is a manifest error. The documentation theme's new `related` component takes
+  its links this way.
+- **Canonical components carry markup landmarks.** Every conforming theme marks
+  a canonical component's root with `data-canonical` and its parts with
+  `data-part`, so a script or a stylesheet can find a callout's title or a
+  tab's panel under any conforming theme. The default, site-dev and starter
+  themes carry them.
+
+- **Plugins can declare Markdoc tags.** A plugin lists its tags in
+  `[shortcodes] codes` and ships a component manifest for each in its
+  `shortcodes/` directory, in the format a theme uses. Two settings decide what
+  those tags may do: `plugins.components.schemas` (default `true`) validates
+  content against the plugin's manifests, and `plugins.components.render`
+  (default `false`) lets the plugin write the markup. With the defaults a
+  plugin tag is validated and left in the page as written, and the log names
+  the plugin and the setting. `accent validate` names a plugin that declares
+  a tag and did not load, and `accent validate --lax` reports plugin component
+  findings as warnings that do not fail the run. `accent query components`
+  lists every tag content may use, where it came from, and what renders it.
+- **Canonical components, and a check that a theme implements them.** Every
+  theme implements the canonical components -- `callout`, `accordion`,
+  `button`, `card`, `tag`, `image`, `breadcrumb`, `tabs` and `tab`, plus
+  styles for the built-in `table` -- with fixed attribute names, so content
+  that uses only them renders under any conforming theme. `accent validate`
+  reports a theme that lacks one, with no content needed, and so does
+  `accent validate --templates`. A page that uses a component the active theme
+  does not declare is now told which theme and whether the component is
+  canonical, in `accent validate` and in the build and serve logs. A theme
+  that provides no components declares `components: none` in `theme.yaml`.
+  `accent validate --lax` relaxes a theme's gaps and a page's missing canonical
+  component, but not a name nothing declares, which may be a misspelling. It
+  now combines with `--templates`.
+- **Builtin components Accent renders itself: `download`, `video`, `diagram`
+  and `search`.** `{% download %}` renders a file beside the page as a card
+  with its name, type and size, the same card `pdf_card()` renders for a PDF.
+  `{% video %}` plays a video beside the page with its WebVTT captions, and
+  `accent validate` reports a video with no `captions` unless it says
+  `captions="none"`, which `--lax` relaxes. `{% diagram %}` renders a diagram
+  with a caption and alt text through the same pipeline as a fenced block, from
+  its body or a `src` file. `{% search %}` places the search box in a page.
+  A file these components link to must be a type Accent serves; for any other
+  type, such as `.zip`, add its extension to `media.attachments.extensions`.
+  Accent now serves `.vtt` caption files as `text/vtt`.
+
+- **Search results highlight your term on the page they open.** Every
+  result link now carries a text fragment built from the three longest
+  words you typed, so the browser scrolls to the first match and marks it. No script runs
+  on the page that opens; both bundled themes paint the mark yellow
+  through `::target-text`, since Chrome's own default is a pale lilac.
+  Chrome, Edge, Safari, and Firefox support text fragments; any other
+  browser opens the page as before.
+
+- **Rename a model field without editing every page.** A field can list its
+  old names under `renamed_from: [teaser]`. A page that still uses an old
+  name loads with the new one, and the next save from the admin editor, the
+  CLI, or an agent renames the key in the file where it stands, keeping its
+  value and comment. `accent validate` reports each page still on an old
+  name and ends with a count per rename. A page that sets both names keeps
+  the new one's value and gets a warning; saving that field in the editor
+  settles it, and the value you were looking at is the one that stays.
+
+- **Search and a light/dark toggle in the preview viewer.** A directory
+  preview (`accent serve <dir>`) now has a search box in the header, backed
+  by the index the preview already built; press `/` to jump to it. Every
+  preview follows the system colour scheme and has a sun/moon button to
+  read in the other one. The choice persists across pages and previews,
+  and selecting the system's scheme again goes back to following it. The
+  viewer also shows the Accent favicon.
+
+- **`nav_tree()` template function.** Returns the page hierarchy as a
+  nested tree (the root page, then `children` all the way down, each node
+  with `url`, `title`, and `nav_title`, in `menu.order` then URL order),
+  built once per render on the server, so a theme renders a site-wide
+  navigation with one `{% for ... recursive %}` loop instead of scanning
+  `all_pages` per level. Nesting follows each page's `hierarchy_url`, now
+  on every listing entry (`all_pages`, `page.children`, and the rest), so a
+  page a permalink pattern or a frontmatter `url:` moved stays under its
+  directory parent. Handles a deployment base path and attaches a page
+  whose parent has no page to its nearest ancestor. The built-in viewer
+  theme's sidebar now uses it.
+
+- **Directory previews honour `.gitignore`.** The auto-index walk behind
+  `accent serve <dir>` (and `content.auto_index` on any site) now consults
+  every `.gitignore` from the content directory down, with git's rules
+  (anchored and directory-only patterns, globs, negations, last match
+  wins), so pointing `serve` at a repository serves what git tracks.
+  `content.auto_index.gitignore: false` opts out; `--write-config` records
+  the flag.
+
+- **Directory previews are navigable sites.** `accent serve <dir>` now
+  gives every directory that holds markdown a section page: a directory
+  with a `README.md`, `index.md`, or `default.md` keeps it, and one without
+  gets a generated page listing its sub-sections and pages, so a tree with
+  no root README is reachable from `/`. The built-in viewer theme gains a
+  sidebar tree expanded along the path to the current page, breadcrumbs,
+  and a home link; single-file and URL previews are unchanged. Hidden
+  entries and the `node_modules` and `target` directories are skipped. The
+  same behaviour is available to any site through
+  `content.auto_index.enabled: true` (with `content.auto_index.ignore` for
+  the skip list), and `theme.embedded: viewer` lets a config-driven site
+  use the built-in viewer theme without a themes directory on disk.
+- **`accent serve <dir> --write-config [PATH]`** writes a `config.yaml`
+  that reproduces the preview (content directory, automatic section pages,
+  the viewer theme or the `--theme-dir` theme, address and port, server-side
+  diagrams) and then serves as usual. A relative `PATH` is resolved against
+  the served directory; an existing file is never overwritten. The written
+  config also drives `accent build` and `accent validate`.
+
+- Ad-hoc serving (`accent serve <file.md>` / `accent serve <dir>`) renders
+  fenced Mermaid and Svgbob blocks server-side as inline SVG. The synthesized
+  config forces `diagrams.render_mode: server` for local targets, since the
+  embedded viewer theme ships no client-side diagram loader; the viewer theme
+  now styles the rendered `.diagram-wrapper` (responsive sizing, dark-mode
+  backdrop, captions). Remote URL targets keep their existing third-party
+  content posture.
+- Alpine Linux support: releases now include fully static
+  `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` binaries with
+  no glibc requirement (and no runtime requirements at all), smoke-tested on
+  Alpine before publishing. `install.sh` detects musl-based systems and
+  selects the musl build automatically; glibc systems keep the existing gnu
+  builds and their 2.28 floor.
+- `install.sh --require-verify` (or `ACCENT_INSTALL_REQUIRE_VERIFY=1`) makes
+  every skipped verification a failure: a checksums file, signature, or
+  signing key that will not download, or a machine without `gpg` or
+  `sha256sum`, now stops the install instead of warning. The default stays
+  fail-open for the interactive one-liner. The deploy workflows run the
+  installer from the checkout with the flag set, so a deploy either verified
+  both the checksum and the signature or did not install at all.
+
+- `api.rate_limit` throttles the API instead of documenting an intention to.
+  It counts requests per minute per client against the API routes only, answers
+  `429` with `Retry-After`, and reports `X-RateLimit-Limit`/`-Remaining`/`-Reset`
+  on every API response. `0`, the default, stays unlimited. Behind a proxy, set
+  the new `api.trust_forwarded_for` so clients are counted individually.
+
+### Changed
+
+- **The component inspector reads the theme once per edit.** An attribute
+  edit read the theme directory and parsed every component manifest three
+  times, on the async runtime, and validated the whole document to show one
+  tag's findings. It now loads the registry once, off the runtime, and
+  validates the tag's own node.
+
+- **`accent serve` and `accent serve-static` start with a clean screen.** In a
+  terminal, a box shows the version, edition, license, mode, and a link to the
+  documentation, and a ready block shows the address and the time startup
+  took. Timestamped log lines begin after it. `NO_COLOR` turns color off.
+  Output to a file, a pipe, or a service is still timestamped from the first
+  line and still includes `Listening on ...`. Internal startup lines, such as
+  the watcher's poll interval and the search backend, now log at debug level;
+  `RUST_LOG=accent=debug` shows them.
+
+- **A broken internal link fails `accent build`; `--lax` reports it as a
+  warning instead.** The build already resolved every internal link against
+  its output. It now fails on a link whose target it did not write, listing
+  every such link with the source file to edit and, for a draft, in-review, or
+  scheduled page, the reason it was not written. Before upgrading, run the
+  current release with `--strict-links` to find them. That flag is now
+  deprecated: it is accepted, prints a notice, and is removed in 0.27. External
+  links are still not checked.
+- **`accent validate` reports a link to a draft or in-review page as an
+  error.** It was an info finding, while the build now fails on the same link.
+  The message says to publish the page or remove the link, and
+  `accent validate --lax` relaxes it along with the component findings; its
+  summary now reads `--lax: N findings reported as warnings`.
+
+- **`gix` now comes from crates.io, moving 0.84.0 to 0.87.1.** The
+  `zoosky/gitoxide` fork carries no patches, so Accent no longer pins a commit
+  on it; the pin had fallen 1110 commits behind upstream. The update brings
+  upstream fixes such as fallible pack-memory reservations. The `tree-editor`
+  feature no longer exists upstream and is dropped. Accent's git code needed no
+  changes. Fetch and push still use the system `git`, because gitoxide has no
+  push yet.
+
+- The default and starter themes use the canonical names: `alert` is now
+  `callout`, with `type` in place of `variant`, and `details` is now
+  `accordion`. The default theme keeps `infobox`, which released documentation
+  versions use. `accent migrate shortcodes` still rewrites `[alert]` and
+  `[details]`, because a component manifest can list the shortcode names it
+  replaces under `migrate.from`, with any attributes it renamed.
+- rustls 0.23.45 (from 0.23.43), for RUSTSEC-2026-0285: TLS 1.3 handshake
+  messages were accepted across encryption level boundaries. It affects the
+  development HTTPS server and `accent serve --tls`. The manifest now requires
+  0.23.45, so the lockfile cannot move back below the fix.
+- wasmtime 48.0.2 (from 48.0.1): code generated by `bindgen!` compiles on
+  the latest Rust nightly, and Wasmtime vendors its `cap-primitives`
+  dependency, so `cap-std` and `cap-fs-ext` leave the dependency tree.
+- **`accent build` renders pages in parallel.** The render pass runs on all
+  cores instead of one; building the 644-page documentation site falls from
+  12.4s to 2.2s on a 28-thread machine. Output is byte-identical however many
+  threads run -- pages are reduced in URL order -- and `RAYON_NUM_THREADS`
+  caps the pool (`1` renders serially). When more than one page fails, the
+  build now reports every failure together in URL order rather than stopping
+  at whichever one a worker reached first.
+
+- **The editor reads the compiled model schema.** The admin editor's form,
+  the typing of a saved or previewed form post, the inline field check, and
+  the model browser's field rows now read the JSON Schema a document model
+  compiles to, instead of each re-deriving the model on its own. Nothing an
+  author sees or saves changes. Two keys join the schema `accent model show
+  --schema` prints: `x-accent-order`, which lists a model's fields in the
+  order they are declared, on the model and on every `object` field that
+  declares fields (the printed `properties` are sorted), and
+  `x-accent-widget` on list items and
+  map values, so a list of `string` and a list of `text` no longer read the
+  same.
+- **A quoted number is a string.** YAML says `5` is an integer and `"5"` is
+  a string; model validation used to parse the quoted form and accept it for
+  an `integer` or `number` field. That made a value's type depend on who
+  asked -- validation called `order: "5"` an integer, while `as_i64` read it
+  back as absent and a template comparing `order == 5` saw a string.
+  Validation now reads what YAML resolved, so `order: "5"` is a type
+  mismatch reported as `got string`. Nothing Accent writes is affected: the
+  admin form, `accent content update-frontmatter --set`, and `accent new`
+  all already emit real YAML numbers for a declared numeric field. A
+  hand-authored page that quotes a number on such a field will now report a
+  type mismatch; remove the quotes. An integer still satisfies a `number`
+  field.
+- **`min_length` and `max_length` count Unicode code points, not bytes.** A
+  model field's length constraints were measured in UTF-8 bytes, so a
+  70-character Open Graph title containing three em dashes measured 76 and
+  was refused against `max_length: 70` -- and the message reported the byte
+  count as though it were a length, so the author counted 70 and was told
+  76. They now count code points, which is what JSON Schema's
+  `minLength`/`maxLength` specify. For most text that is what you would
+  call a character, but not always: an emoji built from several code points
+  -- a flag, a skin-tone modifier, a family sequence -- counts as more than
+  the one character it draws as, and so does a letter written with a
+  combining accent. Content near a limit and not written in ASCII
+  can change verdict: `max_length` becomes more permissive and `min_length`
+  more strict, because code points never exceed bytes. No page in this
+  repository's four sites changes verdict.
+- **Component bodies render as markdown, and the manifest says how each is
+  spliced.** A component body used to be passed through literally when the
+  template put it inside a block-level element, and in `infobox` and
+  `details` the first paragraph was literal while later ones rendered. The
+  manifest's `body:` field now decides the splice: `body: markdown` (block
+  content) arrives between blank lines, so the template's `<div>` closes
+  before it and the whole body renders through the ordinary pipeline;
+  `body: inline` (a label, such as a button's text) arrives flush. Every
+  shipped component keeps `body: markdown` except `button`, which is now
+  `body: inline` and `inline: true`, so it can be written on one line or in
+  a sentence without a placement finding. A theme outside this repository whose label-bodied
+  component declares `body: markdown` sees that label wrapped in a
+  paragraph after this release: declare `body: inline` for it. `accent
+  validate --templates` reports a `body: inline` body placed on a line that
+  starts with a block-level tag, and an indented line after a
+  `body: markdown` body.
+- **Plugin API 0.2.0: the `json` value is UTF-8 bytes.** The one
+  open-shaped value in the plugin contract (frontmatter, filter values and
+  results, model defaults, media metadata, data-store values) crosses the
+  Component-Model boundary as the bytes of one JSON document instead of a
+  flat arena of typed nodes, so a Rust plugin reads it with `serde_json`
+  and a JavaScript plugin with `JSON.parse`. The package is
+  `accent:plugin@0.2.0` and the host's supported API range is now
+  `0.2.0..=0.2.0`: a plugin built for 0.1.0 is refused at install and at
+  load, and the load-time message names the fix, `accent plugin update
+  <name>`. The hub resolver now falls back to the newest listed version
+  this accent can run when the latest build targets a newer host, instead
+  of refusing outright. The first-party plugins and both `accent plugin
+  new` templates build on 0.2.0; their hub builds ship with the release.
+  A payload that is not a JSON document is a plugin diagnostic (a template
+  error for a filter, a warning for a model default or media metadata
+  entry, an invalid-request for a data-store write), never a silently
+  invented value.
+- **Derived caches now carry a schema fingerprint.** Rendered pages,
+  diagrams, processed media variants, and the incremental build manifest
+  are keyed by one digest of the engine build, the document models (what
+  each declares, so a comment or a reformatted model file changes nothing),
+  the loaded plugins and their configuration, `theme.yaml`, the `media`,
+  `code`, `diagrams`, and `markdown` config sections, and the site URL and
+  base path, so an edit to any of them invalidates every derived artifact
+  by construction. In `accent serve`, a `jpeg_quality` change followed by
+  `SIGHUP` now reaches the next derivation (the processor used to keep the
+  value it started with); processed-media variants live in one directory
+  per fingerprint under the cache directory, and the directories of
+  previous fingerprints are deleted when the value moves and at startup.
+  The diagram cache key now carries the block options each renderer
+  reads: width and height for Svgbob, the caption for the client-side
+  markup, all of them for a plugin renderer. The first `accent build`
+  after upgrading is a full rebuild: the manifest format moved to version
+  3 and its hashes are SHA-256, which do not change with the Rust release;
+  after that, a model edit rebuilds every page where it used to rebuild
+  none, and so does a build under a different `--base-url`, which used to
+  skip every page and leave the old prefix in every link.
+- **The template context is now derived from its Rust types.** What a
+  template can read is exactly the context structs, serialized: no
+  hand-maintained mapping sits between them any more, so a new field
+  reaches templates the moment it exists. Nothing a template reads
+  changed -- snapshots of the context every page of the three sites in
+  the repository receives were taken before the change and are identical
+  after it -- and every internal URL still arrives joined with the
+  deployment base path. A JSON Schema of the whole context is committed
+  as a test snapshot, so a release's diff of that file is the list of
+  changes to the theme contract.
+- **Editing a page's frontmatter no longer reformats it.** An admin save,
+  an MCP write, or `accent content update-frontmatter` now rewrites only the
+  fields that actually changed: comments, blank lines, quoting style, and
+  the order you put the keys in are preserved exactly as you wrote them.
+  Saving a page you have not changed writes nothing at all. Previously every
+  write rebuilt the whole block and re-emitted it, so the first save through
+  the admin UI discarded every comment in a page's frontmatter.
+
+- **Duplicate frontmatter keys are now a parse error.** Frontmatter parses
+  through the same YAML policy as config and theme files (one parser for
+  the whole tree; the second YAML engine is gone from the dependency
+  graph). The previous frontmatter parser silently kept the last
+  occurrence of a repeated key, so a page carrying, say, two `title:`
+  keys -- or `1:` beside `"1":`, which normalise to the same key -- built
+  without complaint and dropped one value. Such a page now fails to parse;
+  the fix is to delete the losing key. Keys are compared after
+  normalisation, so the colliding pair is not always literally identical.
+- A UTF-8 byte-order mark at the start of a markdown file no longer hides
+  its frontmatter: the block is parsed normally instead of leaking into
+  the rendered body.
+- Content write operations (`accent content update-frontmatter`, body
+  edits through the admin editor, MCP mutations) refuse a file that opens
+  a `---` frontmatter block it never closes, instead of silently building
+  a second block in front of it. Such files still render (the
+  unterminated block is treated as body, as before); only editing them
+  through Accent asks you to fix the block first.
+
+- **Breaking (static output layout): the JSON REST API is built where it is
+  served.** `accent build` wrote the API to `_api/v1/pages/blog/post/index.json`
+  while `accent serve` answered `/api/v1/pages/blog/post` -- a different prefix,
+  a different path, and a file no static host serves for a directory request, so
+  a frontend developed against the dev server could not read the built output.
+  Both surfaces now derive every path from `api.prefix` (which neither read
+  before), and every resource is written and answered at a `.json` URL:
+  `/api/v1/pages/blog/post.json` resolves against `accent serve`,
+  `accent serve-static` and a bare CDN alike. The old layout is gone; a
+  consumer reading `_api/v1/.../index.json` moves to the new paths. The
+  payloads were reunited too -- the built page detail had been dropping custom frontmatter
+  entirely, writing `null` where the served one omits a field, and publishing no
+  file for archived pages the API answers with 200.
+
+### Removed
+
+- **Breaking: `[shortcode]` syntax is gone.** Square-bracket shortcodes were
+  expanded before the markdown parser ran; that stage no longer exists, and a
+  page still holding the syntax renders the brackets as text. Declared
+  components (`{% name %} ... {% /name %}`) replace them and add what the old
+  form could not: a manifest saying what each component takes, so a misspelled
+  attribute is reported by `accent validate` instead of rendering as nothing.
+
+  `accent migrate shortcodes` rewrites a site and has **not** been removed with
+  the syntax it reads, so upgrading late costs a command rather than a manual
+  rewrite. Run it without `--write` first; it reports what it would change and
+  refuses anything it cannot verify.
+
+  Seven builtins were pure markup and are now components the default theme
+  ships and your theme can redefine: `infobox`, `alert`, `tabs`, `tab`,
+  `button`, `details`, `edition`. Five reached into parts of Accent a theme
+  template cannot and have no content syntax any more -- `[diagram]`, `[pdf]`,
+  `[figure]`, `[iframe]` and `[search]` -- each keeping another way in: a fenced
+  ```` ```mermaid ```` block or `diagram()`, `pdf_card()`, markdown image syntax
+  or a raw `<figure>`, a plain `<iframe>` element, and `search_form()` in a
+  template.
+
+  `[alert]` was a deprecated alias for `[infobox]` that resolved *ahead of* a
+  theme's own `alert` template, so a theme shipping one never saw it render.
+  `alert` is now whatever your theme declares; write `{% infobox %}` for the
+  titled callout.
+
+### Fixed
+
+- **Admin pages are never cached.** Every page and fragment under `/_admin/`
+  now carries `Cache-Control: no-store`. Before, with browser reload off, they
+  carried the public page policy (`public, max-age=300, s-maxage=3600`), so a
+  CDN or proxy in front of Accent could store an editor's page and serve it to
+  others. `http_headers.cache` cannot override it.
+- **Force save works after an edit conflict.** The button in the conflict
+  dialog sent nothing, because it aimed at the save bar the dialog had
+  replaced. It now saves, and a second conflict opens a fresh dialog in the
+  same place.
+
+- **`accent hotfix apply` writes `hotfix.yaml` completely.** The overlay's
+  provenance file ended mid-line, so every `git diff` of it reported
+  `\ No newline at end of file` and line-oriented tooling miscounted the
+  last entry. The file is also written atomically now, through a temporary
+  file that is renamed over it, so an interrupted run leaves the previous
+  manifest intact instead of a truncated one. (b219)
+
+- **The developer site scripts bind loopback, and the specs site commits
+  no credential.** The shared worktree selector behind every `scripts/*.sh`
+  site script forced `0.0.0.0`, so every developer site was reachable from
+  the local network whatever its config said, and `specs/config.yaml`
+  paired that with an admin UI behind a token committed in plain text.
+  Each site's config now decides its own bind, and every config that mounts
+  an admin UI binds loopback; `--address 0.0.0.0` after the selector is the
+  opt-in. The specs config and the admin-dev config defer their admin token
+  to the environment, the specs config its Basic Auth password too, and the
+  site scripts generate what is missing per worktree and print it. An
+  unexpanded `${VAR}` placeholder no longer counts as an admin token, and
+  the login page and the startup log name the variable to set. (b203)
+
+- **CI rejects a duplicate spec identifier.** Two sessions filing specs on
+  one day both listed the directory, saw the same gap, and claimed it, and
+  nothing rejected the second claim until a hand renumber PR. A check on
+  every spec change now fails a PR whose merge result holds two files under
+  one identifier or a spec under the wrong family directory, and its
+  `--branches` mode does the pre-filing scan across unmerged branches. (b308)
+- **`/_health/git` reports the sync status without SMTP.** The probe
+  answered `{"status":"disabled"}` unless mail notifications were
+  configured and compiled in, so a git-backed publisher without an SMTP
+  server had no HTTP-reachable sync status. Every fetch, from a webhook
+  delivery or from polling, now records its outcome in the server state,
+  and the probe reports it, the boot refresh and the last error text
+  included; `disabled` means only that `git.enabled` is off, and a server
+  that has not fetched since startup says `unknown` rather than `ok`.
+  (b282, b309)
+
+- **The service preflight tests no longer race for a released port.** The
+  fixture picked a port by binding and releasing it, and the address check
+  bound it again, so under the parallel test runner another test's
+  ephemeral listener could land in between and add an "in use" finding
+  to a test about something else. The probe is a parameter now: production
+  binds, and a test that is not about the address passes one that always
+  says free. (b283)
+
+- **`git.sync.poll_interval` polls.** The field was declared, documented
+  as the fallback for a forge that cannot reach the server, and read by
+  nothing: a publisher without a working webhook stayed on the commit it
+  booted on. A polling task now runs the webhook's fetch every
+  `poll_interval` minutes on a publisher serving in production, under the
+  same lock and with the same outcome handling, so a push reaches the site
+  within the interval. Dev servers and authors never poll. (b201)
+- **`accent new --field` writes values the page loads back as typed.** A
+  list item was written raw, so `tags=Blog: a post,rust` scaffolded a
+  mapping where a string was meant and the page failed to load, and a
+  leading `#` vanished as a comment. Every scalar and every list item now
+  goes through the YAML serializer; a list item takes the model's declared
+  item type, so an integer list stays numeric; empty segments from a
+  trailing comma are dropped; and a multi-line item continues under its
+  dash. (b220)
+
+- **Two builds of the same content produce the same search index bytes.**
+  `_search/docfind_bg.wasm` differed between builds of identical content,
+  which invalidated it at every deploy and blinded byte-level build
+  comparisons: the keyword extractor ordered equal-score keywords by hash,
+  so the per-document keyword budget kept a different subset each run.
+  The DocFind fork now orders them by score, then by where they first
+  appear in the text, so two builds of the same content give the same
+  search index and the same rendered files; only the build manifest's
+  timestamp differs between them. (b226)
+- **A scheduled page is written on the day it becomes visible, a page
+  reaching its unpublish date is rendered again as archived, and a page
+  that is a draft again loses its output.** An incremental build decided
+  what to render from content and template hashes, which a passing date
+  never moves, so the page was listed by the sitemap, the feeds, and the
+  search index but had no file behind it. The build manifest now records
+  each page's effective status on the build date and rebuilds a page whose
+  status moved, with no edit; a page that is no longer visible has its
+  HTML, markdown companion, paginated continuations, and API detail file
+  removed, which `--dry-run` announces; and every build-side pass reads one
+  build date. (b256)
+- **`accent cache clear` empties the processed-media cache too, and a
+  deleted or renamed media file loses its variants.** The command cleared
+  only the diagram cache, and nothing invalidated processed variants when
+  the admin deleted or renamed their source or when a media file changed
+  under hot reload, so stale variants stayed on disk until capacity
+  eviction. The command now clears both caches and reports each, with
+  `--diagrams` and `--media` to limit it; the admin operations drop the
+  source's variants; hot reload watches the shared media directory too and
+  drops the variants of a changed file by name; a config reload forgets
+  the entries whose files a clear removed. (b238)
+
+- **Generated documentation no longer references internal spec IDs.** 218
+  doc comments across 121 source files named a feature, bug, research,
+  implementation, architecture, or epic tracker ID, which `cargo doc` and
+  `accent docs` rendered for readers who cannot resolve it. Every one is
+  reworded to name the thing instead, the ID moved to a plain code comment
+  beside the item, and a check in CI and both local gates keeps the count
+  at zero. (b224)
+
+- **`accent build --dry-run` writes nothing, and `--clean --dry-run` deletes
+  nothing.** A dry run copied the theme assets, compiled the styles, and
+  wrote the fingerprinted copies into the output before printing that no
+  files would be written, because the rebuild plan needs the fingerprint
+  manifest and the manifest needs the compiled CSS on disk; with `--clean`
+  it also removed the output directory first. The dry run now skips the
+  output preparation and does the asset work in a temporary directory that
+  goes away with the plan, so the output directory is neither created,
+  changed, nor removed. (b305)
+
+- **A build under another `--base-path` into the same output directory
+  rewrites its redirect stubs.** The permalink, `.md` extension, and
+  versionless redirect stubs refused to overwrite a file that differed from
+  what they would write, which is right for another pass's output and wrong
+  for their own stub from the previous build whose target moved, so a prefix
+  change left every stub unprefixed and the conformance check failed the
+  build. The build manifest now records the stubs a build owns; the next
+  build rewrites those, and only those, when their targets move, adopts a
+  stub it finds byte for byte as its own, and removes a recorded stub it no
+  longer emits instead of leaving it to dangle. Anything else at a recorded
+  path stays. (b254)
+
+- **A rebuild into the same output directory no longer adds a fingerprinted
+  copy of every theme asset per build.** The fingerprint pass walks the
+  output `theme/assets/`, where compiled styles live, so from the second
+  build on it hashed its own copies and wrote `editions.<hash>.<hash>.css`,
+  one more segment per build, and nothing removed them. A file shaped like a
+  copy of a sibling that exists beside it is now a copy, never a source: the
+  current one is left in place, and a stale one, an old hash or a doubled
+  name, is removed once the build has succeeded, so the directory holds one
+  copy per asset however often you build into it. A file the theme ships
+  under a hash-shaped name beside something the build does not fingerprint
+  is left alone. The emitted HTML was never affected. (b255)
+- **An incremental build after a stylesheet edit renders every page again
+  when fingerprinting is on.** The `fingerprint` filter writes the hashed
+  URL of an asset into every page that links it, and no page hash saw the
+  asset behind it, so a build without `--clean` after a stylesheet edit
+  rendered only the pages whose content changed and left every other page
+  linking the previous hash. The build manifest now records a digest of the
+  fingerprint manifest, and a change to it is a full-rebuild axis, like the
+  theme and schema hashes. (b304)
+
+- **An enum drop-down shows the file's value even when it is not a declared
+  one.** A component attribute or frontmatter field holding a value outside
+  its declared set displayed the first declared option, while the finding
+  beside it named the real value. The value is now a selected option of its
+  own.
+
+- **Ignored directories and the site's own config file are no longer served
+  or published.** On a site whose content directory is the tree root, as
+  `accent serve <dir> --write-config` writes it, every image, HTML, JSON, or
+  YAML file under `node_modules/` or under a path the tree's `.gitignore`
+  hides was a public URL, and so was the site's `config.yaml`. With
+  `content.auto_index` on, what the loader hides is now not a static asset
+  either, at the bare page URL, under `/content-media/`, or in the build
+  output; and the loaded config file is never served or published in any
+  layout. The preview and the deployed site answer the same media URLs.
+
+- **`accent build` refuses an output directory inside the content
+  directory.** A site whose `content.directory` is `.`, which
+  `accent serve <dir> --write-config` writes, built to the default `output`
+  inside its own tree. The page-local media pass then copied the output as
+  page media, then the copy, until the path was longer than the filesystem
+  accepts. The build now refuses such an output directory before it writes
+  or cleans anything, naming both directories, and `--clean` refuses an
+  output directory that contains the content directory, since cleaning it
+  would delete the site. The same guard covers every directory the build
+  reads: an output inside a mount source, the media directory, the theme's
+  `assets/`, or the `.well-known` directory is refused too, since the next
+  build would read it back, and with `--clean` the output directory may not
+  be, contain, or lie inside any input directory, the theme, models, data,
+  and plugin directories included.
+
+- **`accent validate` no longer reports "Can't nest" warnings for valid
+  Markdown.** A page with an HTML comment and a tag reported "Can't nest
+  'text' in 'document'" at line 1, and bold, italic or link text that wraps
+  onto a second source line reported "Can't nest 'softbreak' in 'strong'".
+  The documentation site went from 608 warnings to none. The first came from
+  accent-proust, fixed in 0.12.1; for the second, Accent allows line breaks
+  inside emphasis and links when it validates.
+
+- **A directory preview no longer polls build output and `.git`.**
+  `accent serve <dir>` watched the whole directory, so serving a repository
+  polled every file under `target/`, `node_modules`, and `.git` twice a
+  second, and reloaded the page whenever a build or a `git` command wrote
+  there. The watcher now skips what the preview skips: hidden entries, the
+  `content.auto_index.ignore` names, and gitignored paths. The same applies
+  to a plain `accent serve` of a `--write-config` preview. `accent serve
+  <file>` watches only the file's own directory.
+
+- **`accent build` leaves media URLs in code samples alone.** A page that
+  showed a processed-image URL such as `/media/hero.jpg?w=960` in a code block
+  or inline code got a `Media source not found` warning for each query. When
+  the site also had real processed images, the build rewrote the sample to a
+  generated filename such as `/media/hero-960w.jpg`. Code samples now build as
+  written, and a missing source image is reported once, naming a page that
+  uses it.
+
+- **Pagination works on static hosts.** A paginated collection linked its
+  pages as `/blog/page:2`, but the build wrote them to `blog/page/2/`, so on a
+  deployed static site every link past the first page was a 404. Pages now
+  live at `/blog/page/2` under both `accent serve` and `accent build`, and
+  `accent serve` redirects the old `/blog/page:2` form permanently. A
+  collection on the home page linked `//page:2`, which browsers read as
+  another host; it now links `/page/2`.
+- **Builtin components under a base path linked to the prefix twice.** With
+  `site.base_path: /repo`, `{% download %}`, `{% video %}` and `{% search %}`
+  wrote `/repo/repo/...`. The prefix is now applied once, including a video's
+  `poster`.
+- **`accent init --docs` includes the files its pages link to.** The docs link
+  a sample script under `media/downloads/`, which scaffolds did not include.
+- **`diagram()` shows a caption once when the diagram renders in the
+  browser.** With `diagrams.render_mode: client`, or `hybrid` in dev, a
+  `caption` rendered twice: once in the browser renderer's figure and once in
+  the wrapper's.
+- **Site search no longer throws on a short query, and a new query
+  restarts keyboard selection.** Typing a single character logged a
+  `ReferenceError` from the search script, and after arrowing through
+  results, typing more kept the old selection, so Enter could open a
+  result other than the highlighted one. Affects every theme that uses
+  `search_form()`.
+- **`search_form()` renders nothing while search is disabled.** With
+  `search.enabled: false`, a theme that called it unconditionally rendered
+  a search box that could not work, and `accent build` output carried a
+  script tag for a `_search/search.js` the build never wrote.
+- **A `future_only` or `past_only` bound on an object sub-field is
+  enforced.** A temporal constraint one level down -- `event.when:
+  { type: date, past_only: true }` -- was only reported when something else
+  on the same field already had a finding, so a page whose one problem was
+  a date on the wrong side of now validated clean. `accent validate`,
+  `accent build`, the admin save, and the publish gate all report it now.
+  A page relying on the gap reports a new warning, or a new error under
+  `content.validation.mode: strict`; the fix is to correct the date or drop
+  the bound.
+- **A URL built by a template helper can no longer break out of its
+  attribute.** `media()`, `url()`, `cdn_url()` and `pdf_card()` mark their
+  result safe so a URL's own delimiters survive into the page, but part of
+  that result is author input: a `"` in a component attribute or a
+  frontmatter field closed the attribute and opened another, so content
+  could add a live event handler to a theme's `<img>` or `<a>`. Those
+  helpers now percent-encode the characters that may not appear in a URI
+  and that end an attribute. No ordinary URL changes, and an
+  already-encoded path is left alone.
+- **A component's link works on a sub-path deployment.** A component
+  template writing `href="{{ attrs.href }}"` emits the autoescaped
+  `&#x2f;` spelling of a root-absolute link; the base-path rewriter read
+  only the literal spelling and left it unprefixed, which the build's
+  conformance check then failed. Both spellings are now rewritten.
+- **A page that opens with a component gets a readable description.**
+  Component tag syntax reached the derived lead -- and so the meta
+  description, the social-card text, the `llms.txt` summary and the search
+  snippet -- and both search indexes tokenised attribute names as content
+  terms. Tag syntax is now stripped alongside raw HTML, keeping the tag's
+  body, and code samples showing a tag are preserved.
+- **Editing a component manifest hot-reloads.** A `shortcodes/*.yaml` edit
+  was classified as an uninteresting change, so the dev server kept serving
+  the cached page with the old declaration while the component's template
+  half reloaded normally.
+
+- **Loading a content directory that holds build output no longer takes
+  minutes.** The content scan indexed every non-markdown file as a media
+  asset and, for upload duplicate detection, read and hashed each one; a
+  repository root with 145 GB of build artifacts under auxiliary target
+  directories took over five minutes to load on every command. The hash is
+  now computed only for a file an upload could produce (within
+  `admin.media.max_upload_mb`, MIME type on `admin.media.allowed_mime_prefixes`);
+  everything else stays indexed without one. `accent serve <dir>` also
+  prints a scanning line before the load.
+- **Pages that name a template the viewer theme lacks render instead of
+  returning 404.** Under the embedded viewer theme (`accent serve <dir>`,
+  `accent serve <file>`, `theme.embedded: viewer`) a page with an explicit
+  `template:` from another theme returned 404 in serve and aborted the
+  build; serve, build, and the admin preview now share one rule and fall
+  back to the viewer's `default` layout. A theme on disk keeps the loud
+  error for a missing explicit template.
+
+- Every string round-trips through the YAML writer and reader, block
+  scalars included. Four shapes the writer spelled in a form the reader
+  read back differently are fixed in the YAML library: a value that is
+  exactly one newline read back empty; a value ending in two newlines
+  gained a newline on every save when another field followed it; a value
+  whose first line is spaces only produced a file the reader refused; and
+  a list item whose first line starts with a space or a tab read back with
+  two extra spaces. The round-trip property tests that found them now run
+  with no exclusions (b212).
+- A duplicate key in `config.yaml`, or in a page's frontmatter, is
+  reported with its path and position (`site.name: duplicate key "name"
+  at line 3, column 3`) instead of the bare key name.
+- A frontmatter field name containing `[`, `]`, or `*` is written as key
+  text. The lossless editor handed every path to the YAML library's query
+  grammar, which reads `[n]` as a sequence index and `*` as a wildcard: a
+  `--set a[x]=1` wrote the key `a`, and a `--remove a[x]` deleted `a`. The
+  grammar gained a quoted form for such a segment, and the editor spells
+  every segment through it, so such a field is added, changed, removed, and
+  renamed under its own name like any other (b234).
+- A `${VAR}` placeholder under a config key containing `.`, `[`, `]`, or `*`
+  (`site.meta` names such as `og.type`, a versioning bucket like
+  `v0.26-dev`) is expanded in place like any other. Such a key used to send
+  the whole file down the tree route, which rewrote every number-like
+  string in it (`01234` loaded as `1234`) and moved a type error's position
+  out of the file, and only a debug line said so. The one site that still
+  takes that route, a placeholder inside an anchored value, is logged as a
+  warning naming it (b235).
+- Config values keep their spelling when environment placeholders are
+  expanded. A string value that YAML would read as a number, such as an
+  SMTP password `01234`, was rewritten to `1234` every time `config.yaml`
+  loaded, because `${VAR}` expansion re-emitted the parsed tree before the
+  typed read; the server then authenticated with the wrong secret and
+  reported nothing. Expansion now edits the file text in place, so every
+  value outside a placeholder reaches the config exactly as written, and a
+  type error after an expanded line reports the line number in your file
+  rather than one in an internal buffer (b227).
+- A frontmatter field name containing a non-printable character (a line
+  break, DEL, a C1 control, or the non-characters U+FFFE and U+FFFF; tab
+  is allowed and written as an escape) is refused by name before anything
+  is read or written: the MCP `update_frontmatter` and `create_page` tools
+  return an invalid-params error, `accent content update-frontmatter
+  --set` and `--remove` exit with the key named, and every content API
+  write -- the admin save and the content agent included -- refuses the
+  operation. Previously an agent-supplied key with a newline in it reached
+  the writer, and before the YAML emitter fix collapsed the page's
+  frontmatter into a single string (b212).
+- A page whose frontmatter cannot be parsed no longer vanishes silently.
+  The scan now logs a warning naming the file and the error (`serve` and
+  `build` both show it), `accent build` still ships every other page, and
+  `accent validate` reports the skipped file as an error and exits 1 --
+  previously it printed "No issues found" over the dropped page.
+- Theme templates HTML-escape `{{ ... }}` expressions again. The explicit
+  auto-escape callback introduced with the Markdoc bridge returned
+  `AutoEscape::None` for every non-component template, believing that was
+  MiniJinja's default for `*.html.jinja` names; the default in fact strips
+  `.jinja` and applies HTML escaping, so authored values had always been
+  escaped -- and briefly were not (b223).
+
+- Site protection (`protection.basic_auth`, `protection.ip_allowlist`) on a
+  server started without `--production` is enforced whether or not
+  `dev.browser_reload` is on. The free-in-dev allowance keyed off the
+  browser auto-refresh setting, so turning that off on an unlicensed dev
+  server silently served every path open, with one WARN per request that
+  blamed licensing. The gate now follows the `--production` flag alone;
+  under `--production` a Standard or Pro license still decides.
+- A Basic Auth username or password that is still an unexpanded `${VAR}`
+  placeholder at startup refuses to start, naming the user entry and the
+  variable. Before, an unset `SITE_AUTH_PASSWORD` protected the site with
+  the literal string `${SITE_AUTH_PASSWORD}` -- a value written in the
+  config file. Empty credentials are rejected the same way;
+  `${VAR:-default}` keeps working and authenticates with the default.
+- The HTTPS token for git-backed content no longer appears in the `git`
+  child's command line. It reaches the credential helper through the
+  child's `GIT_REMOTE_TOKEN` environment variable; argv carries only the
+  variable's name, as the module documentation had claimed all along.
+- The Linux release binaries run on Debian 10, Ubuntu 20.04, RHEL 8,
+  Amazon Linux 2023 and newer again. v0.25.0 needed glibc 2.39 and refused
+  to start on Debian 12 and Ubuntu 22.04, because both Linux targets
+  inherited the glibc of whatever image built them (`ubuntu-latest` and the
+  cross-rs `main` image both moved to Ubuntu 24.04). Both targets are now
+  linked against a pinned glibc 2.28 floor, the release build checks the
+  produced binary against that floor, and a smoke job runs each Linux
+  archive on a glibc 2.28 base before anything is published. The aarch64
+  Linux binary also embeds the dependency SBOM now, like every other target.
+- `install.sh` runs the binary once before installing it. A binary that
+  cannot start on this system is no longer installed under an
+  "Installation complete!" message: the installer exits 1 with the loader's
+  error, the glibc version the release needs and the one the system has,
+  and leaves any earlier installation untouched.
+- Hot reload watches document models. Editing a model in the project
+  `models/` directory, in the theme's `models/`, or in a plugin's `models/`,
+  or a `_model.yaml` under `content/`, during `accent serve` now rebuilds
+  the content index and reloads the browser, so validation, the admin
+  schema browser, and the editor field views show the new schema on the
+  next request. Before, the edit stayed invisible until an unrelated
+  content or template save, an admin page save, SIGHUP, or a restart. A
+  file the watcher cannot classify (an editor swap file, a README) no
+  longer reloads the browser either.
+- `api.allowed_origins` is honoured. The legacy `api.cors` layer applied
+  permissive CORS regardless of the list, so the documented way to restrict
+  origins in production did nothing. `["*"]`, the default, is unchanged.
+
 ## [0.25.1] - 2026-08-29
 
 A bugfix release for the v0.25 line. The reason for it is the Linux release
