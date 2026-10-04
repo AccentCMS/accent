@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-10-04
+
+A security release for the v0.26 line. RustSec published ten advisories
+against the wasmtime 48.0.2 that v0.26.0 ships, one rated critical; this
+release moves the plugin runtime to wasmtime 48.0.5, which fixes all ten.
+Nothing else changes.
+
+Cut from a maintenance branch off the `v0.26.0` tag rather than from
+`master`, so it carries this fix and none of the 0.27 development work.
+Anyone whose licence ceiling is 0.26 can take it.
+
+### Security
+
+- **wasmtime 48.0.5 (from 48.0.2) fixes ten advisories in the plugin
+  runtime,** one rated critical. Five are in `wasmtime`: a native stack
+  buffer overflow from an unvalidated async callback result count
+  (RUSTSEC-2026-0327, critical), two GC heap corruptions, and two ways a
+  guest could get past a fuel limit. Five are in `wasmtime-wasi`:
+  two host panics from out-of-range filesystem timestamps, a `poll_oneoff`
+  fuel bypass, excess host memory for a guest without stdio, and
+  uninitialised padding copied into guest memory. Only plugins run through
+  wasmtime, so a site without plugins never reaches this code. The manifest
+  now requires 48.0.4, the first release that fixes all ten, so the lockfile
+  cannot move back below it.
+
 ## [0.26.0] - 2026-09-24
 
 Scripts are locked down everywhere Accent renders a page. Served pages carry a
