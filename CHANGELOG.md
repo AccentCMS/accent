@@ -5,6 +5,877 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0] - 2026-10-10
+
+Sites can classify pages with their own taxonomies, the way tags work, and
+syndicate more of themselves: Atom and JSON Feed output, feeds scoped to a
+section, and a feed for each collection and taxonomy term. Templates reach
+more of the site. `site.extra` holds site-wide values, listing entries carry
+custom frontmatter, component templates see the page context, and the `date`
+filter writes month and weekday names in the page's language. A `static/`
+directory publishes files as is, `{% include-file %}` embeds a file as
+highlighted code, code blocks can mark spans, and the Netlify artifact writes
+`_redirects`.
+
+Most fixes are for multi-language and versioned sites: tag pages in each
+language, menus and navigation that follow the page's language, and inherited
+pages that link, query, and validate correctly. Five security fixes stop
+routes and builds from reading or publishing files they should not. YAML
+parsing follows YAML 1.2.2 more closely.
+
+Four changes can need action when you upgrade:
+
+- **Tag URLs move to slugs.** `/tags/javascript runtime` is now
+  `/tags/javascript-runtime`. Static builds and `accent serve` redirect the
+  old URLs, but a theme that builds tag links as `/tags/{{ tag.name }}`
+  should call `tag_url(tag)` instead.
+- **`pages` holds the page's own language.** A multi-language theme that
+  reached the other languages through its menu needs a language switcher
+  over `page.translations`.
+- **A broken component manifest fails `accent build`.** Pass `--lax` to keep
+  the old warning.
+- **Stricter YAML.** A hex or octal number with an uppercase prefix (`0X1F`)
+  now reads as a string, and a control character in a comment is an error.
+
+### Added
+
+- **A `static/` passthrough directory, tracked across builds.** Every
+  servable file under `static.directory` (default `./static`) is served at
+  the same path from the site root and copied to the output root by `accent
+  build`, for the files a site must keep at a fixed root path: a
+  `favicon.ico`, a verification file, `humans.txt`, a legacy `/docs/*.pdf`.
+  Content pages and generated files win a path collision, with a warning.
+  The build manifest records what the copy wrote, so a build without
+  `--clean` refreshes a static file you edited and removes one you deleted,
+  and never touches a file at the same path that another pass owns.
+  `--dry-run` lists the removals.
+
+- **Span marks in code.** A fenced code block that opts in with
+  `{% process=true %}` on its info string may wrap any part of its code in
+  the new `mark` component -- inline or around whole lines -- and the theme
+  styles the role: `{% mark role="filter" %}'.items[]'{% /mark %}` renders a
+  classed span inside an unhighlighted `<pre>`. A literal fence (the default)
+  renders byte-identically to before, so pages quoting Markdoc need no
+  escaping. The fence's text -- with no mark syntax and no span markup --
+  is what reaches the search index and llms-full.txt. `accent validate`
+  locates a malformed tag inside a processed fence, and a manifest that
+  enumerates `role` values checks them like any attribute.
+
+- **`body: none` in component manifests.** A self-closing component's
+  manifest can now state that it takes no body, instead of leaving the field
+  absent or declaring a body kind the template ignores. A body passed to such
+  a component is reported with the self-closing spelling to write instead,
+  and `accent query components` gains a `body` column (`block`, `inline`, or
+  `none`, the admin page's words). The shipped `edition` and `image`
+  manifests declare it.
+
+- **`placement:` in component manifests.** `placement: block | inline | both`
+  beside `body:` declares where a component may be written. A component that
+  wraps one line of text and stands between paragraphs -- an install command
+  in a card -- declares `both` and renders warning-free in both places; a call
+  in a placement the manifest excludes is reported naming the declaration.
+  Absent, the placement follows `inline:` exactly as before. The shipped
+  `button` manifests declare `both`.
+
+- **Configurable taxonomies beyond `tags`.** A `taxonomies:` list in
+  `config.yaml` (`name`, `singular`, optional `path`) gives each entry what
+  tags have: an index route and per-term routes at the configured path with
+  slugged URLs and per-language pages, `taxonomy.<name>` and
+  `taxonomy.current_<singular>` in every template, `<name>.html.jinja` /
+  `<singular>.html.jinja` templates with the tag templates as the fallback,
+  `term_url(taxonomy, term?)` beside `tag_url()`, normalized per-page term
+  lists on listing entries (`taxonomies.<name>`), and static build output
+  recorded in the build manifest. A frontmatter scalar is read as a
+  one-element list, so `categories: praxis` and `categories: [praxis]` are
+  the same page, and `accent validate` warns when a taxonomy key holds
+  anything but a string or list of strings. A site without a `taxonomies:`
+  key is unchanged.
+
+- **A directory mount publishes its non-markdown files as is.** The files
+  beside a mounted page are served under `/content-media/` and at the bare
+  page URL, and copied by `accent build`, the way the content directory's
+  page-local media always was; before, a mount's files were indexed but
+  nothing answered their URLs. What a `.gitignore` under the mount source
+  hides stays out, as do `node_modules` and `target`. Set
+  `page_local_media: false` on a mount whose files must stay out of the
+  site.
+
+- **`{% include-file %}` embeds a file of the site as a highlighted code
+  block,** read each time the page renders, so the code on the page never
+  drifts from the file. `src` is relative to the page's directory, or a site
+  path starting with `/` that goes through a mount into its source, so any file
+  in the content directory or a mount can be included. `lines` (`12-40`, `12-`,
+  `1-3,10-12`) and `region` (the lines between `ANCHOR: name` and
+  `ANCHOR_END: name` markers, mdBook's convention) show part of a file; the
+  shown lines are dedented by default, `title` adds a caption, and `lang`
+  overrides the language the extension implies. Paths outside the site,
+  symbolic links leaving it, dotfiles, hidden files, files over 256 KiB, and
+  non-UTF-8 files are refused. A tag that cannot be rendered is an error in
+  `accent validate` and fails `accent build` unless you pass `--lax`, the way
+  a broken link does. Editing the included file re-renders the page in
+  `accent serve`, and the build manifest records the file, so the next
+  `accent build` renders the page again without `--clean`.
+
+- **Atom and JSON Feed output, feeds scoped to a section, and feeds for a
+  collection or a taxonomy term.** `feed.format` accepts `rss`, `atom` or
+  `json`, and `feed.outputs` writes several at once, each as `{ format,
+  path }`; a config with only `feed.path` writes the same RSS as before.
+  `feed.include` and `feed.exclude` take URL prefixes, so a feed lists one
+  section while a dated page outside it stays in the sitemap. A page whose
+  `content:` block sets `feed: true` gets a feed at `<its url>/feed.xml`
+  listing its collection, and a `taxonomies:` entry with `feed: true` gets
+  one per term at `<path>/<slug>/feed.xml`. `accent serve` answers every
+  output and every collection and term feed at the URLs the build writes,
+  and the new `feed_outputs()` template function lists the outputs so a
+  theme emits one `<link rel="alternate">` for each; the default theme does.
+
+- **`site.extra` gives templates free-form site-wide values.** Put any YAML
+  under `site.extra` in `config.yaml` -- an announcement bar, a social
+  handle, a flag -- and read it as `site.extra.*` in every template. It is
+  an empty mapping when the key is absent, so `{% if site.extra.x %}` is
+  safe, and it reloads with the config on SIGHUP or a save in dev. For a
+  per-language value, nest under the language code and index by
+  `site.current_language`.
+
+- **Listing entries carry your own frontmatter keys, and collections filter
+  on them.** Each entry in `all_pages`, `pages`, `page.children`,
+  `page.siblings`, `page.collection`, `taxonomy.pages` and
+  `recent_documents()` has a `custom` mapping, so `{% for p in all_pages if
+  p.custom.category == "praxis" %}` works. A collection's `filter` takes
+  `custom:` with one value per key; a page matches when its value is equal,
+  or, for a list, when any element is. The match is by value and type, so
+  `featured: true` does not match `featured: "true"`.
+
+- **The `date` filter writes month and weekday names in the page's
+  language.** `%B`, `%b`, `%A` and `%a` use the page's `language`, then
+  `site.language`, then English, so a German page prints `März`. Pass
+  `locale="fr"` to override the language. `date("long")` and `date("short")`
+  are presets for the common shapes: `15. August 2026` and `15.08.2026` in
+  `de`, `August 15, 2026` and `08/15/2026` in `en`. Numeric specifiers do not
+  change, so an English site renders as before. A language with no data
+  falls back to English and logs a warning once.
+
+- **The `netlify` header artifact also writes `_redirects`.** With
+  `build.header_artifacts: ["netlify"]`, the build writes the file beside
+  `_headers` from `build.routing`: the `redirects` list as `from to status`
+  lines, then the moves the build knows about (a frontmatter `redirect:`
+  with its code, a permalink or `.md` move as a 301, each home page's
+  authoring URL), then `error_document` as `/* /404.html 404`. The
+  meta-refresh stubs stay for hosts that do not read the file. Setting
+  `build.routing` with the `netlify` target no longer fails the build;
+  `canonical_host` still does, naming the key, because `_redirects` cannot
+  express it. A `_redirects` in the output that the build did not write
+  fails the build, as a hand-written `_headers` does. Cloudflare Pages reads
+  the same format.
+
+- **Component templates read `site`, `page` and the listing variables.** A
+  template under `shortcodes/` now sees `site`, `page` (the page the
+  component sits on, without its body), `pages`, `all_pages`, `taxonomy`,
+  `theme`, `dev` and `accent`, the values a page template sees. A component
+  can list the newest posts of a tag or link back to its page without an
+  attribute for each. The component's own `attrs`, `children` and `body`
+  win a name clash, and a page whose component lists others renders again
+  when any page is added, removed or changes what a listing shows.
+
+### Changed
+
+- **`accent serve` caches rendered feed bodies outside dev mode.** The site
+  feed, collection feeds, and per-term feeds are rendered once per
+  content-index build and served from the page cache on repeated requests,
+  so a reader that ignores `Cache-Control` no longer triggers a full
+  re-render per poll. A content change, hot reload, or config reload
+  invalidates the cached bodies, and they roll over at the UTC date change
+  so scheduled publish and unpublish dates land in feeds on time; dev
+  serve keeps rendering fresh.
+
+- **A diagram plugin never receives a caption.** The host puts a diagram's
+  caption around the picture, as it has since 0.26, so the
+  `render-options.caption` a diagram plugin is handed is always none, and
+  the caption is no longer part of a diagram's cache key. The field stays
+  in the plugin contract, so existing plugins load unchanged. The
+  pass-through renderer's own figure, which no page reached, is gone, so
+  no renderer can add a second caption.
+
+- **A relative link or image that names a file beside the page is rewritten
+  to the file's `/content-media/` URL** when the page renders, the way a
+  `.md` link is rewritten to its page, so a README's `[plan](benchmark.yml)`
+  works on GitHub and on the site alike. A file the site does not publish,
+  and every file link when `media.page_local` is off, stays as authored.
+  This applies to every page, in the content directory and in a mount.
+  `accent validate` resolves such links the same way.
+
+- **`pages` lists the menu pages of the rendered page's language.** On a
+  site with `site.languages`, the `pages` list a theme's menu iterates held
+  the menu pages of every language; it now holds those of the page's own
+  language, the way `page.children` and `page.siblings` follow the page's
+  language. A theme that reached the other languages through its menu links
+  them with a language switcher over `page.translations` instead, as the
+  starter theme now does; the internationalization guide has the example.
+
+- **Tag pages live at the tag's slug, in each language.** A tag's page
+  is now `/tags/javascript-runtime` for `Javascript Runtime`, where it was
+  the lowercase spelling with its spaces (`/tags/javascript runtime`); a
+  static build redirects each old lowercase path to the slug, and
+  `accent serve` redirects any other spelling of a tag's URL there. On a site with
+  `site.languages`, each language other than the default has its own tag
+  pages under its prefix (`/en/tags/...`), listing that language's pages
+  only, and a tag that only another language carries redirects from
+  `/tags/{slug}` to that language's page. Link tags with the new
+  `tag_url()` template function, which gives the slug, the deployment
+  prefix and the language prefix. `TagInfo` has a `slug`. Spellings that
+  differ only in case, spacing or punctuation are one tag; a `+` or `#`
+  after a letter is spelled out, so `C++` is `/tags/cplusplus` and `C#` is
+  `/tags/csharp`. `taxonomy.tags` lists the tags of the pages the tag pages
+  list, so drafts and archived pages no longer count, and the API's
+  `?tag=` filter and `accent query list --tag` match the same spellings.
+
+- **YAML parsing follows YAML 1.2.2 more closely.** noyalib 0.0.57 (from
+  0.0.51) reads frontmatter, `config.yaml`, theme, and model files. A plain
+  hex or octal number with an uppercase prefix (`0X1F`) or a sign after the
+  prefix (`0x-1`) is now a string; `0x1F` is still 31. A raw control
+  character in a comment is an error, as it already was in a value. A
+  folded block scalar keeps a whitespace-only line indented past its
+  content, an empty line after an escaped line break in a double-quoted
+  string is a line feed, and an anchor or tag on an empty list item no
+  longer swallows the next item. An implicit key that is a flow collection
+  longer than 1024 characters is refused. Typed reads now apply the same
+  size and alias budgets as untyped ones. `accent validate` reports the
+  same results as before on the documentation, development, and specs
+  sites.
+
+- Dependencies refreshed: every semver-compatible update, plus dirs 7,
+  imagesize 0.15, rand 0.10, getrandom 0.4, and base64 0.23.
+  `wasm-encoder`, `wasmparser`, and `wit-parser` move to the 0.254 line
+  that wasmtime 48 uses, so the tree carries two fewer copies of
+  `wasmparser`. faster-hex 0.10.1, pulled in through gix, fixes the
+  RUSTSEC-2026-0306 unsoundness warning. `cargo audit` reports no
+  vulnerabilities. The Sass compiler moves to accent-sass 0.17.0, with one
+  output change: through `meta.load-css`, an `@extend` inside the loaded
+  file no longer reaches the including stylesheet. The shipped themes
+  compile byte for byte as before.
+
+### Fixed
+
+- **`accent build --dry-run` lists every file a real build removes.** It
+  listed the output of pages that are gone or no longer visible, but not
+  the redirect stubs a build removes once no page needs them, nor the pages
+  of a tag that is gone, so the real build changed more than the plan said.
+  The dry run now lists both, and still writes nothing.
+
+- **The orphan hint for a translated page names a file that clears it.** On
+  a versioned site with fallbacks, a translated page in a version that
+  inherits its section index got a hint naming the translation file in the
+  version the index came from, which creates a page there and leaves the
+  finding. The hint now names the file in the page's own version, or the
+  section's URL when that version has no index of its own to place it by.
+
+- **Page-local media stays out of other routes' URLs and of the site's
+  configuration.** A content directory named `tags/`, `content-media/` or
+  `theme/`, or after a configured taxonomy, had its files copied by
+  `accent build` to a bare URL that `accent serve` answers from another
+  route. Those files are now published under `/content-media/` only. With
+  `content.directory: .`, the theme, models, data and plugin directories
+  were page-local media, served and published like any other; neither
+  `accent serve` nor `accent build` treats them as page media now.
+
+- **`accent query` sees the pages a version inherits.** On a versioned site
+  with fallbacks, `accent query` indexed only the pages each version has
+  itself, so `query validate` reported a relative link to an inherited page
+  as broken and `query page` did not find that page. It now expands
+  fallbacks as `accent serve`, `accent build` and `accent validate` do.
+
+- **A finding on an inherited page is reported once.** On a versioned site
+  with fallbacks, `accent validate` listed a problem in a page that later
+  versions inherit once for every version, and its "across N pages" counted
+  each inherited copy. The finding is now reported against the page whose
+  source has it, a finding that only a copy has stays, and the counts in
+  the report and in the `accent build` and `accent serve` log line count a
+  copy as its original.
+
+- **A page in a folder without an index file has breadcrumbs again.** A
+  page such as `pages/about.md` was linked to its folder, which is no page,
+  so it rendered with no `page.parent` and no breadcrumbs, not even Home.
+  It now hangs off the nearest page above the folder, as the navigation
+  tree already placed it. Its siblings and `page.prev`/`page.next` stay the
+  other pages in the folder, and no listing above it changes.
+
+- **A version whose name starts another's no longer claims its pages.** On
+  a versioned site with versions such as `v1` and `v10`, fallback expansion
+  read `/docs/v10/intro` as a page of `v1` at `0/intro`, so a version
+  falling back to `v1` gained pages at URLs no version owns, such as
+  `/docs/v20/intro`, in `accent build` and `accent serve` alike. A version
+  now matches only as a whole URL segment.
+
+- **A diagram's alt text reaches screen readers on every path, once.** Alt
+  text was injected as the SVG `<title>`, which the client-render path has
+  no SVG to put it in, and a plugin's SVG could end up announcing it twice.
+  The host now owns it, as it owns the caption: `alt=` becomes the wrapping
+  figure's `aria-label` on the server, client and plugin paths alike,
+  nothing is injected into the SVG, and a plugin receives no alt text, so
+  no renderer can write a second label. Blank alt text counts as none.
+
+- **A component manifest the theme gets wrong fails the build.** A manifest
+  that failed to parse or validate demoted its component to undeclared at
+  warning level, so every page using it shipped with a component-shaped
+  hole and `accent build` exited 0. It now fails the build the way a
+  broken link does, before anything is rendered; `accent build --lax`
+  reports it as a warning and keeps the old demotion, and
+  `accent validate` reports the same problems as errors, as before.
+
+- **A `.md` link on a page a later version inherits reaches its target.**
+  On a versioned site where one version falls back to another, a page the
+  later version inherits is the same file at a URL in each version, and
+  the link resolver took that for two pages sharing a file and left every
+  relative `.md` link to it as written: `href="intro.md"`, a 404 or the
+  markdown twin, in every version, and `accent validate` reported each
+  one. Such a link now names its target in the linking page's version: on
+  `/docs/v2/guide`, inherited from v1, `[Intro](intro.md)` is
+  `/docs/v2/intro`, whether v2 inherits that page too or has its own. A
+  link that names another version explicitly, such as `../v1/intro.md`,
+  still goes there.
+- **`accent build` renders diagrams in a plugin's language.** A plugin that
+  declares diagram languages rendered them under `accent serve` only: the
+  build composed its diagram registry from the built-in renderers alone,
+  so a fenced block, `{% diagram %}` tag or `diagram()` call in a plugin's
+  language became a warning box, or failed the build under
+  `diagrams.on_error: fail`. The build now registers the same plugin
+  languages as serve, under the same `diagrams.plugins.enabled` switch.
+- **The pikchr example plugin builds from a cold checkout again.** The
+  example's uncommitted lockfile newly resolved pest 2.9.3, which pins a
+  psm release that does not link on `wasm32-wasip1`; the manifest caps
+  pest below 2.9.3 until a release links on that target again.
+- **A `publish_date` written as a timestamp keeps an embargoed page
+  hidden.** `publish_date` and `unpublish_date` were read as `YYYY-MM-DD`
+  only, so a timestamp such as `2026-12-01T09:00:00Z`, the shape other
+  generators export, failed to parse and the page was published on the
+  next build. Both now read dates and ISO 8601 timestamps. The schedule
+  stays by the UTC day, so a timestamp is rounded to keep its promise: a
+  page is never shown before its `publish_date` or after its
+  `unpublish_date`. **Changed:** a `publish_date` that is neither a date
+  nor a timestamp now keeps the page a draft instead of publishing it, and
+  `accent validate` reports it, and an unreadable `unpublish_date`, as an
+  error. A page's `date` reads timestamps too, on the day it falls on in
+  its own zone: such a page now sorts by its date in collections,
+  `llms.txt`, the pages APIs and `recent_documents()`, two posts on one
+  day by their moment; a feed dates it with that moment and orders items
+  by it, so the order never contradicts the feed's own `pubDate`s; and a
+  dated permalink moves it, with a redirect from its old URL. A model's
+  `date` field accepts the same timestamps. `accent validate` also
+  reports a schedule whose window never shows the page as an error, and
+  warns on a month-first spelling such as `01/03/2026`, which not every
+  locale writes.
+
+- **The `date` filter reads timestamps with a zone, an offset or fractional
+  seconds.** `{{ site.built_at | date("%d.%m.%Y") }}` printed the raw
+  `2026-10-07T17:44:20Z`, because the filter read `2026-10-07T17:44:20` but
+  not the same value with `Z`, an offset, fractional seconds, a space for
+  the `T` or no seconds, and the same went for a frontmatter date another
+  generator exported (`2026-08-15T15:45:00.000Z`). It reads all of them now
+  and prints them in their own zone, UTC when they have none, so `%H:%M`
+  and `%z` work too; `accent.build_time`'s trailing ` UTC` and an offset
+  with no minutes read too. `now()` now prints as its date and time instead
+  of `{}`, and formats. A string it still cannot read, or a pattern chrono
+  cannot write, prints the value unchanged and is logged once for each
+  template: a value once, a pattern once. Sorting, permalinks and publishing read dates as before.
+
+- **`accent docs template-filters` lists only what the engine has.** It
+  listed a `containing` test and `urlencode` and `wordcount` filters that
+  are not registered, so a template written from it failed to render.
+  Those rows are gone; the `in` row says which side is the sequence, and the `date`
+  row shows the positional format, the `format=` and `locale=` keywords
+  and the input shapes. A test renders every listed name through the
+  engine, so a listed name the engine lacks fails the build of Accent itself.
+
+- **A page whose name holds a space or another encoded character is found
+  on a static host.** A directory named `My Notes` is the page
+  `/My%20Notes`, and the build wrote it to `My%20Notes/index.html`; a static
+  host decodes the request to `My Notes/` first and answered 404, and so did
+  `accent serve-static`. The build writes it where the host looks now, as it
+  writes the page's markdown twin, its media, its paginated pages, its PDF
+  thumbnails and its static API file, and `accent serve` answers the same
+  API URL. **After upgrading, build once with `--clean`** if the site has
+  such pages: the first build after the upgrade is a full one, but an
+  output an earlier version filled keeps the copies it wrote under the
+  encoded names, a draft's included, until a clean build. A name whose
+  decoded form the build machine cannot write as a file name stays encoded
+  and is logged, since a static host cannot serve it: one with `/`, `\` or
+  NUL anywhere, and on Windows also `: * ? " < > |`, a control character, a
+  trailing dot or space, or a device name such as `CON`. A frontmatter
+  `url:` that names another page's file once decoded, such as `/my notes`
+  beside a `my notes/` directory, keeps its original URL with a warning, as
+  one that names the other page's URL does; so does a `url:` onto another
+  page's own URL when that page moves too, so no page is displaced. On a
+  file system that ignores case, as macOS and Windows do by default, the
+  later of two pages whose URLs differ only in case is left out with a
+  warning, since they share a file. A page's collection feed moves beside
+  the page.
+- **A diagram plugin is told the page's URL, not where its file is.** The
+  plugin contract promises `page-path` is the URL of the page a diagram is
+  on and that the sandbox cannot learn the host's directory layout, but the
+  host passed the page's absolute source file path, such as
+  `/Users/me/site/content/docs/a.md`. A fenced block and a `{% diagram %}`
+  tag now pass the page's URL, `/docs/a`, without the deployment prefix. A
+  `diagram()` call in a layout or partial renders on every page, so it
+  passes none, and one render serves every page. A plugin diagram's cache
+  key uses the URL too, so two checkouts of a site at different paths share
+  their rendered diagrams.
+
+- **A heading keeps its `{ .class #id }` attributes.** The pass that adds
+  a heading's anchor link rebuilt the heading with the generated id and no
+  classes, so `## Title {.big-text #custom}` rendered without its class and
+  with a slug for its id. The classes and attributes stay now, and an id
+  you give, with `#custom` or `id=custom`, is the heading's, which the
+  anchor link and `page.toc` use; a generated id never takes it. A remote
+  page's headings drop their classes and attributes, since a third party
+  writes that markdown.
+
+- **A variable written in text renders its value.** `Welcome to
+  {% $site.name %}.`, in a component's body or in plain content, reached
+  the page as written: the tag pass edits tags, and the parser makes a
+  variable a text node. Its value is written now, as text that never
+  becomes markup, or as it is inside a fence that processes tags or a
+  diagram's source. `accent validate` names an unknown `$site` key or
+  namespace; a `$frontmatter` key stays optional.
+
+- **A page in a grouping folder is no orphan.** `accent validate` reported
+  every page in a directory with no index file as orphaned, one info line
+  per page on every flat-file site, although the file-page model makes
+  such a directory a folder that groups pages. The check now walks up from
+  the page past such folders and reports it only when the first section
+  that is not a page has an index in another form: unpublished, only in
+  another language, or only in another version of a versioned root. A home
+  page in `01.home/` counts as the root, on a site with no home page each
+  page whose walk reaches the root is reported, and `accent validate`
+  expands a version's fallback pages first, as build and serve do, so it
+  checks the site that is served.
+
+- **A media link names its file when the name holds `%`, `?`, `#` or `\`.**
+  `page.media` URLs joined a file's name into the path as it was, so
+  `My%20Doc.png` was linked as a request for `My Doc.png`, and `what?.png`
+  as `what` with a query. Those characters are percent-encoded in the URL
+  now; a space or a letter outside ASCII is written as before. A link in
+  a page's body is read as a URL, as on GitHub, so
+  `[photo](My%20Photo.png)` is rewritten to the file `My Photo.png`.
+
+- **A `---section:` region renders the way the page's body does.** Each
+  section was rendered from its markdown directly, so a component, a
+  partial or another tag in it stayed literal text, with smart punctuation
+  rewriting its quotes; its links missed the site's `base_path`; and
+  `accent validate` never read it. A section now passes through the tag
+  stage, the base path and, on remote content, the HTML escaping, as the
+  body does; validation checks its tags and names the section; and serve
+  and the build follow the partials it uses. A `---section:` marker inside
+  a fenced code block is now part of the example rather than a section
+  break.
+
+- **Security: remote content reads no file of the site.** A remote
+  mount's markdown, or the document `accent serve <url>` serves, is written
+  by a third party, and an `include-file` or a `partial` in it could
+  publish a file from the site's content directory, or from the directory
+  the command ran in. Both are refused on such a page now, and `accent
+  validate` and the build report them as warnings, which fail no build.
+
+- **Security: theme assets publish no dotfile and follow no link out of the
+  theme.** A theme that shipped `.env`, `.npmrc` or a `.git/` directory
+  under `assets/` served it at `/theme/assets/`, and `accent build` copied
+  it into the output; a symbolic link under `assets/` published whatever it
+  led to. The route and the build now leave out a name that starts with
+  `.`, follow a link only to a file inside `assets/`, Sass sources
+  included, and on Windows refuse a reserved device name such as
+  `COM1.scss`, which would open the device.
+
+- **A warm build renders again the pages that show a page that changed.**
+  A build without `--clean` renders a page again when its own inputs
+  change, but menus, listings, tag clouds and prev/next links show other
+  pages too. They kept an old title, linked a removed page, and kept a gone
+  tag's page and the links to it, until a full build. The build now
+  records what listings show of each page, and when that changes, or a
+  page comes or goes, it renders every page. An edit to a page's body
+  alone still renders that page alone. A page you remove takes its output
+  with it, so a link to it fails the build's link check, as it does on a
+  clean build.
+
+- **No builtin puts the site's config file on a page.** With the config
+  file in the content directory, `include-file`, `partial` or
+  `diagram src=` could publish the configuration, license key and
+  credentials included. They refuse it now, by identity, so a case alias,
+  hard link or symbolic link is refused too. A `partial` also refuses a
+  dotfile, a file under a dot directory, and a symbolic link that leads
+  outside its directories, as `include-file` does.
+
+- **Ignore rules follow git's case rules.** With `auto_index` on, a
+  `.gitignore` that says `Secrets/` hid nothing for a directory stored as
+  `secrets/`, which git ignores on macOS and Windows, and on a file system
+  that ignores case, a hidden file was reachable under another spelling.
+  `.gitignore` rules now match in any case where the repository's
+  `core.ignorecase` says so, and a request is judged by the names the
+  directories store. The `ignore` list still matches names as written.
+
+- **Page-local media under a directory with a numeric sort prefix is served
+  at its clean URL.** `/content-media/guide/pic.png` and the bare
+  `/guide/pic.png` now answer for a file in `01.guide/`, as `accent build`
+  has always published them: serve maps the clean URL to the file through
+  the content index instead of joining the path literally. The build also
+  emits the bare copy for such a directory, so the two agree.
+
+- **A file whose name holds a `%` is served by that name.** The media and
+  theme asset routes decoded a path twice, so a file named `My%20Doc.png`
+  was looked up as `My Doc.png` and one named `%FF.png` not at all:
+  `/content-media/` answered 404 for a file its page URL served. Every file
+  route, the plugin asset route included, now decodes a path once. The
+  page URL alias also checks a page's `media.expose: false` against the
+  decoded path, so a differently encoded spelling of the page's URL no
+  longer serves its files.
+
+- **A build without `--clean` follows an edit to a page's frontmatter.** The
+  build decided whether a page changed from its body text alone. So a new
+  title, tags, template or other frontmatter field, an edit to a named
+  `---section---` block, or an edit to one of the page's module files left
+  the page's old output in place. It now compares the whole text of the
+  page's file and its modules' files, and for a plugin's page, the
+  frontmatter and markdown the plugin returns. The first build after
+  upgrading renders every page once.
+
+- **A warm build rewrites the tag redirects.** The build manifest did not
+  record the tag pages or the redirects from a tag's old spellings. So a
+  build without `--clean` kept a redirect for a spelling no page used any
+  more, which failed the prefix check after `--base-path` changed. It also
+  kept a tag's old page where a redirect to the language that still has the
+  tag belonged. The redirects now share the record of the alias redirects,
+  and the tag pages have their own. A warm build keeps a tag page after its
+  tag goes, as it keeps a removed page's output, and a full build removes
+  it. A build also writes the tag pages again when they were removed from
+  the output.
+
+- **A translated home in a `home/` directory has one URL.** With
+  `01.home/default.md` and `01.home/default.de.md`, the German home answered
+  at both `/de` and `/de/home`; at `/de` its children included itself and it
+  had no translations, and a build wrote no `de/index.html`. It now follows
+  the default home: it is the page at `/de/home`, served at `/de`, which
+  `/de/home` redirects to and every published URL uses, and a build copies
+  it to `de/index.html`. This holds while no page has `/` of its own. In
+  the same change:
+  - `page.translations` names each home at its root, so the language
+    switcher links `/` and `/de`, not `/home` and `/de/home`.
+  - `accent validate` resolves a link to `/de`.
+  - A root `index.de.md` is no longer shadowed by the home directory's
+    `default.de.md` at `/de`.
+  - A home that becomes a draft loses its copy at `/` or `/de` in a warm
+    build; the copy at `/` stayed before.
+  - A home in a flat `home.md`, not a `home/` directory, is served at `/`;
+    `/home` redirected to a `/` that answered 404 (b365). Serve answers a
+    home's root from the index, as the build does.
+  - The `.htaccess` header artifact redirects `/home` and `/de/home` with
+    `RedirectMatch` on the whole path. The `Redirect` it wrote for `/home`
+    matched a prefix and sent a page under the home directory, `/home/x`,
+    to `/x`.
+
+- **A refused path is a 404, and `..` inside a file name is allowed.** The
+  static resolvers refused any path whose text contained `..` with a server
+  error, so a page miss such as `/notes..txt` or `/blog/wait...what`, a
+  traversal probe, or an encoded absolute path answered 500, and a file
+  named `a..b.png` could never be served. A refused path is now a miss,
+  answered with 404 and logged at debug level. One rule refuses a path on
+  every asset route: an absolute path, a `..` segment, a name that starts
+  with `..`, and a name that ends in a dot or a space, which Windows opens as
+  another name; two dots inside a name are part of it.
+
+- **Security: the site's config file is no longer served under another
+  spelling of its name.** With the config file inside the content directory
+  (`content.directory: .`), a file system that ignores case, as macOS's and
+  Windows' do, opened `config.yaml` for `/Config.yaml`, so the
+  configuration, a license key included, was served. A hard or symbolic
+  link to the config file served it on any system, and the static build
+  published it; the same gaps reached dotfiles, markdown sources and files
+  under a directory the auto-index ignore list or a `.gitignore` hides. A
+  served or published file is now judged by what it is on disk.
+
+- **A component without a template renders raw HTML in its body.** A
+  component declared only by its manifest (`render: aside`, no template)
+  was rendered whole by the Markdoc engine, which reads a raw-HTML block as
+  literal text, so `<div>a</div>` in its body appeared on the page as
+  escaped markup. Such a block is now written as HTML, as in a templated
+  component's body; the engine still renders the rest of the body.
+
+- **Security: the theme asset route no longer reads stylesheets outside the
+  theme.** A stylesheet request went through the style pipeline before its
+  path was checked, so a crafted path could read a `.scss` or `.sass` file
+  outside the theme that the server process could read, in every mode, and a
+  `.css` file when assets were served in production form (`accent serve
+  --production`, or `dev.browser_reload: false`) or a Sass file of the same
+  name sat beside it. The path is now checked first, and the pipeline
+  refuses a path outside the theme itself. That also
+  stops `accent build` from writing generated utility CSS outside the output
+  directory when a theme sets `styling.utilities.output` to such a path.
+
+- **Security: the admin static route no longer reads files outside its
+  directory.** With `admin.dev_assets_path` set, `/_admin/static/` accepted
+  an encoded absolute path and returned any file the server process could
+  read, without a session, and followed a symlink out of the dev tree. And
+  a second spelling of a vendored file's URL, such as
+  `vendor//alpine.min.js`, skipped a hotfix overlay and served the copy the
+  overlay replaces. The route now accepts one spelling of a relative path
+  only, and does not follow a symlink out of the dev tree.
+
+- **`nav_tree()` and `accent query tree` follow the page's language.**
+  On a site with several languages, `nav_tree()` built one tree from every
+  language's pages, so a theme's navigation hung the English pages under the
+  German home. It now builds the rendered page's language's tree, rooted at
+  that language's home; link the home with `nav_tree().url`. And
+  `accent query tree`, the MCP content tree, the admin page tree and the
+  REST `/tree` started at `/`, where another language's pages are no
+  children, so they never showed them. From the site root they now list
+  each other language's root too, with or without a home page there.
+
+- **A raw-HTML block stays where it was written.** The Markdoc parser,
+  `accent-proust`, held a block of raw HTML back and attached it to
+  whichever node opened next: the following tag, the parent after a closing
+  tag, the other branch after `{% else /%}`, the next tab. In `accent build`
+  and `accent serve` the block was dropped, moved to the wrong branch or
+  sibling, or rendered twice. Accent now uses `accent-proust` 0.12.2, which
+  keeps the block under the tag that contains it.
+
+- **A URL with broken percent-encoding is a 404, not a 500.** `accent
+  serve` answered `GET /a/%FF` with `500 Internal Server Error` and logged
+  nothing: the static-file lookup the page handler tries first treated an
+  encoding that is not UTF-8 as a server failure. Such a path names no file
+  or page, so it now gets the site's 404 page.
+
+- **The REST API's tags and schema leave out drafts.** `/api/v1/tags`,
+  `/api/v1/schema` and their built files counted every page, drafts and
+  pages in review included, so a tag only a draft carried was listed and a
+  tag's count could exceed its detail's pages. The tag list now counts the
+  pages the page list shows, and the schema describes the pages the API
+  serves a detail for, archived and error pages included. A tag no listed
+  page carries has no detail: `/api/v1/tags/{tag}` is a 404, and a build
+  removes every tag detail file an earlier build wrote that it does not.
+
+- **A translated home page has one URL, and lists its pages.** The English
+  home of a German site was indexed at `/en/` while `accent serve` answered
+  at `/en`, so the built home listed no children and an empty
+  `@self.children`, the served home listed itself among its children and
+  had no translations (a language switcher there rendered nothing), and the
+  home showed among its children's siblings. It is now `/en` everywhere and
+  the root of its language's tree, and a relative link or wikilink in it
+  to a page, such as `[About](about)`, resolves to the English page.
+
+- **A menu on a multi-language site no longer links the other language.**
+  The German blog's menu linked the English posts and the English menu the
+  German ones, against the internationalization guide's promise that each
+  language has its own navigation tree. Collections, `page.children` and
+  `page.siblings` were already scoped by language; the menu now is too, in
+  `accent serve`, `accent build` and the MCP page preview.
+
+- **A capitalised or multi-word tag link is no longer broken.** The
+  starter theme linked a tag as written (`/tags/Javascript%20Runtime`)
+  while the build wrote its page in lowercase (`/tags/javascript runtime`),
+  so every such link was a broken link in the build log and a 404 on a
+  case-sensitive host. The shipped themes link `tag_url(tag)`, the page the
+  build writes.
+
+- **`accent validate --model <name>` reports that model's findings.** It
+  kept a finding only when its message carried a `[model:name]` marker,
+  which constraint, rule and file-name findings do not, so the documented
+  way to check one model reported a clean site while `--models` listed
+  them. Each model finding now carries its model, and the filter reads that.
+  `--model` alone keeps every finding on that model's pages, as its help
+  says; add `--models` for model checks only. A name no model has is an
+  error.
+
+- **Model rules can read the core fields.** A rule's expression saw only
+  custom frontmatter fields, so `title is defined` failed on every page and
+  a rule could not relate a custom field to `title` or `date`. An
+  expression now reads every core field, `title`, `date`, `tags`,
+  `status`, `publish_date` and `url` among them, as the field constraints
+  read it.
+
+- **`accent query` and `accent content` take `--config` after the
+  subcommand.** `accent query page /about --config site/config.yaml` was
+  rejected with `unexpected argument`, while `serve`, `build`, `model` and
+  the other command groups accept the flag in either position. The
+  site-location flags (`--site-dir`, `--content-dir`, `--theme-dir`,
+  `--theme`) follow it, and `accent docs agent-readme` and `accent docs
+  claude-md` name the flag. `--site-dir` on `query` and `content` now reads
+  `<site>/content` and `<site>/themes`, as on `serve` and `build`, where it
+  read `<site>/site/content/main`.
+
+- **`accent validate` accepts a child component written on one line.** The
+  declared-components reference and the 0.26 notes show
+  `{% tab label="macOS" %}Install with Homebrew.{% /tab %}`, and validate
+  reported each such line as a misplaced tag, failing the CI gate the
+  reference tells you to run. A block component written alone on its line
+  inside its parent is now a block placement whether or not its body shares
+  the line. One on a line with other text or another tag, in a list item, or
+  at the top level of a page is still reported.
+
+- **A site whose content root holds the shared `media/` directory builds
+  without a warning per media file.** With `content.directory: "."`, the
+  page-local pass found each shared media file again at its bare URL,
+  `/media/<file>`, where the shared-media pass had already put it, and
+  warned that it was skipping it. The page-local pass no longer copies
+  anything to a URL under `/media/`, which `accent serve` answers from the
+  shared media directory; it still copies the directory to
+  `content-media/`, as serve answers it there.
+
+- **`accent query` reads each page's document model.** The query command
+  built its index without the models, so `query list --model` matched
+  nothing, `--show-model` printed nothing, and `query validate` missed every
+  model finding that `accent validate --models` reported. It now resolves
+  the model by the same routes validation uses (the `model:` field, the
+  template name, a `_model.yaml` file) and runs the site's model
+  validation for `query validate`. `query page` reports the model, and
+  `query list` prints it with `--show-model`.
+
+- **`accent content update-frontmatter` checks the page's model.** It
+  reports the model findings an edit introduces, such as an enum value the
+  model does not allow, in the result's `model_findings`. Under
+  `validation.mode: strict` it refuses a write that introduces a model
+  error, as `build` and `serve` fail on one. An edit that would leave
+  frontmatter that does not parse, which made the page vanish from the
+  site, is refused in every mode.
+
+- **`accent validate` no longer reports every translated page as an
+  orphan.** On a site with `site.languages`, the home page of a language
+  other than the default was published at `/en/` while its pages sat under
+  `/en`, so validate reported `Orphaned page: parent "/en" has no index
+  page` once per English page: its tree starts at `/en`, which the
+  orphan check treated as a missing parent. A page directly under its
+  language root is now a top-level page of that language, with or without
+  a home page at `/en`. A translated page whose section really has no
+  index in its language is still reported, naming the file to add, such as
+  `about/default.en.md`, the translation of the section's index.
+
+- **`accent validate` counts the pages it validated.** The summary said
+  "across 2 pages" on a 30-page site, because it counted the entries that
+  carried a finding, a theme file among them, while a log line above it
+  counted something else. It now prints one summary, with the number of
+  pages validated (with `--model <name>`, the pages that model governs).
+  With `--models` or `--model`, the report shows model findings and whatever
+  fails the run, without the theme's informational notes.
+
+- **The first DocFind search no longer warns in the console.** `search.js`
+  initialised the DocFind module with a bare URL, a form wasm-bindgen has
+  deprecated and logs a warning for; it now passes
+  `{ module_or_path: ... }`.
+
+- **Commands whose output is data log to stderr.** Every command wrote its
+  log lines to stdout, so `accent query components --format json` was
+  preceded by an INFO line and did not parse, a plain listing's first line
+  was a timestamp, and `accent mcp` mixed log lines into its JSON-RPC
+  stream. `query`, `content`, `model`, `docs` and `mcp` now log to stderr,
+  coloured only on a terminal and not under `NO_COLOR`. The servers and the
+  build still log to stdout.
+
+- **`accent docs template-context` documents `nonce`.** The one variable
+  0.26 asks every custom theme to write on its scripts was missing from the
+  generated reference, because the engine injects it outside the context
+  types the reference is built from. A new Request and build section lists
+  it, with what it does under `accent serve` and `accent build`, from the
+  same declaration the engine registers it by; `accent docs
+  template-filters` lists it under Globals; and the script examples on the
+  theme portability, environment variables and templating guide pages now
+  carry it.
+
+- **The Apache artifact no longer needs `AllowOverride Options`.** The
+  generated `.htaccess` carried `Options -Indexes`, which Apache honours only
+  where the host's `AllowOverride` includes `Options`; on hosts that leave it
+  out, Apache refused the file and every page answered 500. The directive is
+  now opt-in with `build.routing.directory_listing: deny`, and the
+  static-build page explains how to check a host first. **Upgrade note:** a
+  site whose host allowed the directive loses it on the next build; set
+  `directory_listing: deny` to keep directory listings off. The artifact
+  still needs `AllowOverride FileInfo Indexes`, which the requirements now
+  name.
+
+- **Simple Search keeps words with letters outside ASCII whole.** The index
+  and the query split words at every letter outside ASCII, so
+  *Hartnäckiger* was indexed as `hartn` and `ckiger`, and a search for
+  *Erstgespräch* matched every page with a "ch" in it and linked to a
+  fragment of the word. Both now split only where a Unicode letter, mark or
+  digit ends, compose a decomposed umlaut first, ignore invisible layout
+  hints such as the soft hyphen, and fold case with Unicode case mapping, so
+  a query tokenizes exactly as the index does. The index also counts
+  `search.content_length` in characters, as documented, not bytes, so a page
+  in Japanese or Cyrillic keeps the whole length; native search snippets in
+  the API, MCP and CLI results do the same.
+
+- **`accent docs serve` accepts `--no-tls` and `-p`.** `accent serve` and
+  `accent serve-static` take `--no-tls` since TLS became their default, and
+  a script passing it to `docs serve` got an error. `docs serve` always uses
+  plain HTTP, so it accepts the flag and changes nothing, and its help says
+  so; `accent serve --docs` serves the same site with TLS in development.
+
+- **A component's `media` attribute means one thing.** The shipped `card`
+  and `image` components passed it to `url()`, and the landing-page
+  tutorial to `media()`, so a value written for one rendered a broken image
+  under the other. A `media` value is now a path under the shared media
+  directory (`/landing/hero.webp`) everywhere: the shipped components pass it
+  to `media()`, which also accepts the older `/media/landing/hero.webp`, with
+  or without the sub-path prefix, and remote files. A page-relative value or
+  a remote URL still goes through `url()`. `accent validate` warns about a
+  value the shared media route would not serve, and one written with the
+  `/media/` prefix.
+
+- **The 0.24.0 and 0.25.0 notes list the `page.lead` changes as
+  theme-visible.** Both were mentioned only under Fixed, so an upgrader whose
+  theme already printed the field saw its first paragraph twice, or the
+  description in its place, without a warning. Each release's Changed
+  section now carries its change and what to do.
+- **DocFind search finds the body words of German pages.** DocFind split a
+  page's text into keyword candidates at English stop words only, so a German
+  body came back as one long candidate per sentence and nothing but title
+  words matched. The engine now splits at punctuation and reads each page
+  with its own language's stop words, a page's lead and tags are indexed
+  too, and every phrase feeds its words to the keyword budget, so a word
+  inside a longer run is searchable on its own. DocFind still indexes
+  keywords within a per-page budget, not every word, which the search
+  reference now says.
+
+- **A component after a block of raw HTML no longer crashes the build or the
+  server.** A page where a block-level tag followed raw HTML, such as
+  `<div class="cards">` before `{% card %}`, made `accent build` abort with a
+  stack overflow and took a running `accent serve` down on the first request
+  for the page. The component now renders after the HTML. Tags nested more
+  than 64 deep are reported (`accent::tag-nesting-too-deep`) and left as
+  written instead of exhausting the stack.
+
+- **A release reaches returning visitors.** CSS, JavaScript, WebAssembly, and
+  font files were sent with `Cache-Control: public, max-age=31536000,
+  immutable` whether or not their URL changes with their content, so a
+  browser that had fetched `/_search/search.js` or a theme stylesheet once
+  kept that copy for a year after the site upgraded. Now only a fingerprinted
+  URL (`style.<hash>.css`) keeps that policy; every other such file gets the
+  configured policy without `immutable`, and with a `max-age` or `s-maxage`
+  above a day capped at an hour, so a release reaches a returning visitor
+  within the hour. This applies to `accent serve --production`, `accent
+  serve-static`, and the `.htaccess` and `_headers` files
+  `build.header_artifacts` generates. The deployment guide's nginx examples
+  no longer pin theme assets for a year either.
+
+- **A deploy no longer publishes the build manifest.** `accent build` wrote
+  `.build-manifest.json` into the output directory, so a deploy that uploaded
+  the directory published it, and with it the address, template, and status
+  of every page, drafts included. The manifest now lives in the project,
+  under `.accent/build/` beside `config.yaml`, and the output carries only an
+  `.accent-build` file with a digest of it, so a deleted, emptied, or
+  replaced output is built in full. The first build after the upgrade reads
+  the old file, stays incremental, and deletes it locally; delete
+  `/.build-manifest.json` from your host too if your deploy never removes
+  remote files. Cache `.accent/build/` with the output in CI to keep
+  incremental builds, and pass `accent serve-static --config` the config the
+  site was built with.
+
+- **`/readyz` answers 503 while a theme template does not compile.** The
+  probe reported `templates: ok` for a theme whose templates were broken,
+  because MiniJinja compiles a template on first use, so a pod with a broken
+  theme passed readiness and then answered 500 on every page. The server
+  now compiles every `.jinja` and `.j2` template in the theme at start and
+  on each reload, logs each failure with the template's name, and reports
+  `"templates": "error"` with HTTP 503 until a reload fixes it. A
+  `--production` server refuses a reload that would replace working
+  templates with broken ones, and keeps serving; the response names no
+  template, the log does.
+
 ## [0.26.1] - 2026-10-04
 
 A security release for the v0.26 line. RustSec published ten advisories
@@ -969,6 +1840,12 @@ Component-Model replacement epic.
 
 ### Changed
 
+- **`page.lead` is the page's `description:` when it has no `lead:`.**
+  *(Added to these notes after the release.)* It was an excerpt of the first
+  paragraph, and the Fixed entry for meta descriptions changed it for every
+  surface that reads a lead, templates included. A theme that prints
+  `{{ page.lead }}` shows the description on those pages instead.
+
 - **The plugin runtime moves to Wasmtime 48.0.0 LTS.** LTS releases carry a
   24-month support window with guaranteed security backports, against two
   months for an ordinary major -- which is the reason this line was the target
@@ -1230,6 +2107,16 @@ connection, a request path, or every request at once.
   request, whatever the URL path.
 
 ### Changed
+
+- **Templates can read `page.lead`.** *(Added to these notes after the
+  release.)* The docs site's theme, the templating guide and the `accent
+  docs` variable table used the field, but it never reached the context;
+  0.24.0 exposes it, as the meta description entry under Fixed says. A page
+  without a `lead:` gets an excerpt of its first paragraph, so a theme that
+  already prints `{% if page.lead %}` above the body starts rendering that
+  branch on almost every page and shows the first paragraph twice. Remove the
+  branch from the template, or give each page a `lead:` of its own. Deleting
+  the paragraph from the body moves the duplicate to the next one.
 
 - **`accent serve` now uses HTTPS in development mode.** A bare `accent serve`
   binds TLS with a self-signed certificate and negotiates HTTP/2, instead of
