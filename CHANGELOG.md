@@ -5,6 +5,128 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.1] - 2026-10-16
+
+A bug-fix and security release for the v0.27 line. It fixes eight bugs, most
+of them found while moving a site to 0.27: `accent validate` rejected
+partials and links to `static/` files the build publishes, links in a
+`---section:` region did not resolve, canonical and social URLs were
+escaped, component templates saw no `page.modules`, and the JavaScript
+plugin template built plugins Accent could not load. It also takes security
+fixes in wasmtime, rustls, noyalib, Mermaid, KaTeX and the JavaScript plugin
+toolchain.
+
+Cut from a maintenance branch off the `v0.27.0` tag rather than from
+`master`, so it carries these fixes and none of the 0.28 development work.
+Anyone whose licence ceiling is 0.27 can take it.
+
+### Changed
+
+What templates see changes in four places; the context schema does not:
+
+- `page.modules` in a component template holds the page's modules, as it
+  does in the page template. It was an empty list.
+- `absolute_url()` returns a safe value, so autoescaping no longer rewrites
+  its slashes. Characters that could end an HTML attribute come back
+  percent-encoded, and `&` as `&amp;`.
+- The HTML of a `---section:` region has its wikilinks and relative `.md`
+  links resolved to their pages.
+- `diagrams.mermaid.cdn_url` defaults to Mermaid 11.17.2.
+
+### Fixed
+
+- **A JavaScript plugin from `accent plugin new --lang js` loads.** The
+  template's build produced a component that imported `wasi:http`, which
+  Accent does not provide, so Accent skipped the plugin at startup ("a
+  matching implementation was not found in the linker") and it never ran.
+  The build script now turns off the JavaScript engine's built-in HTTP
+  support. A plugin makes HTTP requests through the `outbound-http`
+  capability, as before. To fix a plugin made from the 0.27.0 template, set
+  the `build` script in its `package.json` to `jco componentize plugin.js
+  --wit wit --world-name content-plugin --disable http fetch-event -o
+  plugin.wasm`. The flags must follow the input file.
+
+- **Component templates see the page's modules.** `page.modules` was empty
+  in a component, although the page template looped the same modules, so a
+  module's content could not be placed with a component. A component now
+  reads each module's name, title, rendered content and fields, in
+  `accent serve` and `accent build` alike.
+
+- **`accent license status` works outside a site directory.** It failed with
+  "failed to read file: config.yaml" in a directory without one, although
+  the key it reports usually comes from `ACCENTCMS_LICENSE`. It now reads
+  `config.yaml` only when the directory has one, and says when it did not.
+  A file you name with `--config` must still exist.
+
+- **Canonical and social URLs keep their slashes.** `absolute_url()` returned
+  a value that autoescaping wrote as `https:&#x2f;&#x2f;example.com&#x2f;...`,
+  so every page built with a shipped theme advertised its canonical link,
+  `og:url`, `og:image` and `twitter:image` in that spelling. It now returns a
+  safe value, as `url()` does, with the characters that could end an
+  attribute percent-encoded and `&` written as `&amp;`.
+
+- **Links in a `---section:` region work, and `accent validate` checks
+  them.** A section's wikilinks and relative `.md` links were written into
+  the page as authored, so they did not reach their pages, and a broken link
+  in a section passed `accent validate` and failed only the build. Sections
+  now resolve their links as the page's main content does, and validation
+  checks them, naming the section in a finding.
+
+- **`accent validate` accepts links to `static/` files.** A link to a file
+  in the `static/` passthrough directory, such as a legacy `/docs/*.pdf`, was
+  reported as broken and failed `accent validate`, although the build
+  publishes the file and `accent serve` answers it. A link to a file the
+  build would not publish, or one that is missing, is still reported.
+
+- **`accent validate` accepts the partials the build renders.** Every
+  `{% partial %}` was reported as not found, whether the file was in the
+  theme's `partials/` directory or in the content directory, so a site that
+  used one failed `accent validate`. Validation now resolves each name as
+  the build does, and still reports one that resolves nowhere.
+
+- **The schema browser lists models by name.** `/_admin/models` showed a
+  site's models in an order that changed every time the server restarted.
+  It now lists them by name.
+
+### Security
+
+- **wasmtime 48.0.6 (from 48.0.5) fixes twelve advisories in the plugin
+  runtime.** One is in `wasmtime-wasi`: a plugin with filesystem access
+  could escape its directory by renaming a symbolic link written with a
+  trailing slash (RUSTSEC-2026-0352). Eleven are in `wasmtime`, most of them
+  ways a guest could panic the host through component-model async calls,
+  streams and futures, plus an unbounded handle table and a stack overflow
+  on deeply nested types. Only plugins run through wasmtime, so a site
+  without plugins never reaches this code.
+- **rustls 0.23.46 (from 0.23.45) fixes four advisories.** `Debug` output of
+  a client session could expose TLS secrets, an ECH rejection could send
+  buffered data to the outer server, Brotli certificate decompression could
+  allocate up to 1 GiB before authentication, and an unauthenticated
+  ServerHello could downgrade later connections to classical key exchange.
+  The manifest now requires both releases, so the lockfile cannot move back
+  below them.
+- **noyalib 0.0.58 (from 0.0.57), a security release of the YAML parser.**
+  None of its fixes changes what Accent does: the one in code Accent calls,
+  the checks after a frontmatter edit, was already covered by a full
+  re-parse under Accent's own settings, and the others are in parser
+  features Accent does not enable. Pages, config and build output are
+  unchanged. An unknown key in a model file's `body:` section is now
+  reported with its line, column and path.
+- **Mermaid 11.17.2 (from 11.15.0) for the dev-mode diagram preview fixes
+  five advisories.** A diagram could hang the previewing tab (radar and XY
+  charts), pollute object prototypes (architecture diagrams and the
+  configuration APIs), or style the page around itself. Mermaid loads only
+  in `accent serve` without `--production`; built sites use server-rendered
+  SVG. A site that sets `diagrams.renderers.mermaid.cdn_url` keeps its own
+  version.
+- **KaTeX 0.19.0 (from 0.16.21) in the docs theme**, which `accent init
+  --docs` copies. KaTeX no longer treats a setting inherited from a
+  polluted `Object.prototype`, such as `trust`, as set.
+- **The JavaScript plugin template takes jco 1.36.1 and componentize-js
+  0.23.0** (from 1.23.0 and 0.21.0). The old toolchain installed
+  `decompress` 4.2.1, whose archive extraction could write outside its
+  target directory during `npm install`.
+
 ## [0.27.0] - 2026-10-10
 
 Sites can classify pages with their own taxonomies, the way tags work, and
