@@ -5,6 +5,158 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.2] - 2026-10-18
+
+A bug-fix release for the v0.27 line that also carries two features. It
+fixes six bugs: `accent.exe` failed to start on a Windows install without
+the Visual C++ runtime, components linked with a doubled prefix on a
+sub-path deployment, `accent build --base-url` reached only the sitemap,
+tabs did not switch on a site from `accent init`, a `---section:` region
+skipped most of the body's markdown stages, and a markdown-only site failed
+its own link check. With markdown-only output, every page is now markdown,
+the generated host configuration serves it, and the link check reads it.
+Taxonomy terms keep the spelling authors write, and pages carry
+`page.taxonomies`.
+
+Cut from the `release/0.27.x` maintenance branch rather than from `master`,
+so anyone whose licence ceiling is 0.27 can take it.
+
+### Changed
+
+What templates see changes in these places:
+
+- Each term in `taxonomy.tags` and in a configured taxonomy's
+  `taxonomy.<name>` has a `label`, and a term page has
+  `taxonomy.current_label`. A term page's title uses the label:
+  `Tag: Beratung aare` where it was `Tag: beratung aare`.
+- `page.taxonomies` holds the page's configured taxonomies' terms as lists.
+- `page.toc` lists a `---section:` region's headings after the body's.
+- With `accent build --base-url`, `site.url` is the flag's URL, and so is
+  every absolute URL derived from it.
+- In a component, `url()`, `media()`, `page.url` and `all_pages` URLs are
+  root-relative; Accent adds the deployment prefix once when it places the
+  component.
+- With markdown-only output, tag and category pages and the 404 page render
+  through `.md.jinja` templates: `tags.md.jinja`, `tag.md.jinja`,
+  `error/404.md.jinja`, and a taxonomy's own twins.
+
+### Added
+
+- **Every page of a markdown-only site is markdown.** With
+  `content.markdown_view.default_format: markdown`, tag and category pages
+  and the 404 page are now markdown too, in `accent serve` and
+  `accent build`, sent as `text/markdown; charset=utf-8`. Each renders
+  through the `.md.jinja` twin of its HTML template -- `tags.md.jinja`,
+  `tag.md.jinja`, `error/404.md.jinja` -- and, when the theme has none,
+  through a built-in markdown list or message. The build writes them as
+  `tags.md`, `tags/cli.md` and `404.md`, and the default theme ships the
+  templates. `accent serve-static` answers a missing page with `404.md`.
+- **The generated host configuration serves markdown-only output.** With
+  `build.header_artifacts`, the `.htaccess` and the Netlify `_redirects`
+  and `_headers` now answer each page's URL from its `.md` file, `/` from
+  `index.md` and a missing page with `404.md`, send `.md` files as
+  `text/markdown; charset=utf-8`, and answer the build's redirects with a
+  redirect status, which an HTTP client follows. The static build guide
+  states the rule a host needs and gives tested Caddy and nginx
+  configurations.
+
+- **Taxonomy terms keep the spelling authors write.** Each entry of
+  `taxonomy.tags` and of a configured taxonomy's `taxonomy.<name>` has a
+  `label`: the term as the first page in URL order writes it, such as
+  `Beratung aare` for the name `beratung aare`, and on a site with several
+  languages, as that language's pages write it. Print `label` and compare
+  `name` or `slug`. On a term page, `taxonomy.current_label` is the term's
+  label, and the page title uses it: `Tag: Beratung aare` where it was
+  `Tag: beratung aare`. The shipped tag and category pages print it.
+- **`page.taxonomies`** gives the page being rendered its configured
+  taxonomies' terms as lists, as `p.taxonomies` does for a listing entry:
+  `categories: praxis` and `categories: [praxis]` are both
+  `page.taxonomies.categories`. Read a taxonomy the page may not use as
+  `page.taxonomies.categories | default([])`.
+
+### Fixed
+
+- **A markdown-only listing's later pages are markdown files.** Page 2 of
+  a listing was written as `blog/page/2/index.html` with markdown inside,
+  so a host sent it as HTML. It is now `blog/page/2.md`, served at
+  `/blog/page/2` like any other page.
+- **The build checks the links in a markdown-only site's pages.** The link
+  check read only `.html` files, so in markdown-only output it read no
+  page, and a link to a missing page shipped. It now reads each `.md`
+  page's links, skipping code, and a broken one fails the build.
+
+- **A markdown-only site builds without `--lax`.** With
+  `content.markdown_view.default_format: markdown`, `accent build` writes
+  each page as `<url>.md`, but its link check looked for
+  `<url>/index.html`, so every build failed on the redirect stubs it wrote
+  itself. The link check now resolves a page's URL to its `.md` file in this
+  mode, and the build no longer warns about a redirect at the page's own
+  `.md` file. `accent serve-static` now serves these pages at their URLs,
+  `/` from `index.md` and `/docs/guide` from `docs/guide.md`, and the static
+  build guide shows how to configure Caddy to do the same. A "failed to
+  write file" error now names its cause.
+
+- **A `---section:` region renders like the page's body.** A section ran
+  only a few of the body's markdown stages, so its headings had no `id`,
+  anchor link or `page.toc` entry, its code was not highlighted, its
+  `> [!NOTE]` admonitions rendered as plain blockquotes, and its diagram
+  fences stayed code blocks, in `accent build` and `accent serve`. A section
+  now renders through the same stages as the body. Its headings join
+  `page.toc` after the body's, in the order of the section names, so a
+  template that builds a table of contents from `page.toc` now lists them
+  too. A section heading that repeats a body heading's text gets the next
+  free id, such as `overview-1`. Two consequences when you upgrade: with
+  `diagrams.on_error: fail`, a diagram that fails in a section now fails
+  `accent build`, as one in the body does; and under a frontmatter
+  `rewrite`, `accent serve` resolves a section's relative links against the
+  URL being served, as it does the body's and as `accent build` already
+  did.
+
+- **Tabs switch on a site from `accent init`.** The starter theme declared
+  `js/tabs.js` in `theme.yaml` but its base template loaded no script, so
+  `{% tabs %}` showed the first panel and never switched, since 0.26.0. The
+  template now loads the theme's declared scripts. A site created from the
+  starter before this release keeps its own copy of the template: add these
+  lines before `</body>` in `themes/simple/templates/base.html.jinja`:
+
+  ```jinja
+  {% for js in theme.assets.js %}
+  <script src="{{ url('/theme/assets/' ~ js) }}" nonce="{{ nonce }}"></script>
+  {% endfor %}
+  ```
+
+- **`accent build --base-url` sets every absolute URL.** The flag reached the
+  sitemap and `robots.txt` only: canonical links, `og:url`, `absolute_url()`,
+  JSON-LD and the feeds kept the host of `site.url` in the config, and with a
+  different path they joined the old URL to the new path, a URL that existed
+  nowhere. The flag is now the build's `site.url`. Its path is the base path
+  unless `--base-path` or `site.base_path` sets one, also when it has no
+  path: `--base-url https://example.com` builds for the root even if the
+  config's `site.url` has a path, and the build says so. The flag must be an
+  `http://` or `https://` URL with no query or fragment.
+
+- **Components link correctly on a sub-path deployment.** Since 0.27.0, the
+  `button`, `card`, `image` and `tag` components of every shipped theme,
+  and any component that wrote a URL from `url()`, `media()`, `page.url` or
+  `all_pages`, put the deployment prefix in twice under a base path
+  (`/site/site/blog`), so `accent build` failed its link check and `accent
+  serve` rendered broken links. In a component, those URLs are now
+  root-relative, and Accent adds the prefix once when it places the
+  component in the page; `site.base_path` and `absolute_url()` keep the
+  prefix. The link check names a link with a doubled prefix as written.
+  Components in `.md` output now write root-relative URLs, as the page's
+  own links there do.
+
+- **`accent.exe` starts on a clean Windows install.** The Windows binaries
+  of every release from 0.22.0 to 0.27.1 needed `VCRUNTIME140.dll`, which
+  comes with the Visual C++ Redistributable rather than with Windows. On a
+  machine without it, `accent` failed to start with a missing-DLL error (exit
+  code `-1073741515`), however it was installed; WinGet's validation failed
+  the same way. The C runtime is now linked into `accent.exe`, so it needs
+  only the DLLs Windows ships, and the release fails if a binary imports any
+  other. If `accent` did not start for you, install this release, or the
+  Visual C++ 2015-2022 Redistributable for an earlier one.
+
 ## [0.27.1] - 2026-10-16
 
 A bug-fix and security release for the v0.27 line. It fixes eight bugs, most
