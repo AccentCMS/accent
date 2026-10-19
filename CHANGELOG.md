@@ -5,6 +5,133 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.3] - 2026-10-19
+
+A bug-fix release for the v0.27 line. It fixes nine bugs: site search listed
+pages of every language, from a search form and from the search island;
+redirect pages appeared in the sitemap, the search index, `llms.txt` and the
+feeds; a configured taxonomy without its own templates listed the tags;
+`accent validate` counted a component finding's line from the body, not the
+file; `accent serve` allowed scripts for search and diagrams a site turned
+off, redirected a `static/` file under a versioning root that the build
+publishes, and did not revalidate links when `static/` changed; and
+`diagrams.enabled: false` did not reach the `{% diagram %}` tag or
+`diagram()`.
+
+Cut from the `release/0.27.x` maintenance branch rather than from `master`,
+so anyone whose licence ceiling is 0.27 can take it.
+
+### Changed
+
+- **`diagrams.enabled: false` turns off every diagram surface.** The switch
+  removed only the fenced-block processor: a `{% diagram %}` tag and a
+  `diagram()` call in a template still rendered, as an SVG in the build and
+  in dev serve as markup for the browser loader. Since the dev server no
+  longer allows the Mermaid CDN on a site with diagrams off, that page showed
+  the bare source in dev. Both now render their source in a code block, in
+  the element and class a fenced block gets, in `accent serve` and
+  `accent build`. A site that turned
+  diagrams off and still wants the tag or the function to draw diagrams
+  turns them back on.
+- **New keys in the `taxonomy` template context.** Every taxonomy page, the
+  tag pages included, carries `taxonomy.name` and `taxonomy.singular` (`tags`
+  and `tag`, or a configured taxonomy's), `taxonomy.terms` (that taxonomy's
+  term list) and, on a term page, `taxonomy.current_term` (the term's
+  lowercase name). On other pages `name` and `singular` are none and `terms`
+  is empty.
+- **Taxonomy names that collide with a context key are rejected.** A
+  configured taxonomy named `name`, `singular`, `terms`, `pages`,
+  `current_term`, `current_label` or `current_tag`, or with the singular
+  `label`, or named after a taxonomy's `current_<singular>` key, its own
+  included, is now a configuration error. Its keys would replace the
+  context's own: `taxonomy.pages` and `taxonomy.current_label` already
+  collided before this release. Rename the taxonomy, or its `singular`.
+- **The search island holds a search form.** The search island had a search
+  client of its own; it now holds the form `search_form()` renders and loads
+  the site's search script when it hydrates. Its results, messages and
+  keyboard handling are those of every search form, DocFind included. In a
+  template, put `{{ search_form("Search...", 5, script=false) }}` inside the
+  `<accent-island data-component="search">`: the new `script=false` leaves
+  the script to the island. An `island:search` block renders the form itself
+  and takes `placeholder`, `max_results`, `no_results`, `results_label` and
+  `all_languages`. The props `endpoint`, `min_chars` and `debounce` are gone:
+  the island reads the site's own index, and `endpoint` also missed the
+  deployment prefix. Results use the form's `.acms-search-*` classes, so a
+  theme that styled `.island-search-results` or `.search-hit` styles those.
+  A hand-written form inside a search island no longer searches: replace it
+  with `search_form(..., script=false)`.
+
+### Fixed
+
+- **`accent serve` revalidates links when `static/` changes.** The link check
+  reads the passthrough directory, but the hot-reload watcher did not watch
+  it, so adding a file there to fix a broken link left the finding in the
+  admin and MCP reports until an unrelated content edit, and removing one
+  left its links reported as fine. The watcher now watches the directory and
+  rebuilds the content index on a change there, and the browser reloads.
+- **A static file under a versioning root is served at its path.** On a site
+  versioned under `/docs`, `accent serve` answered a request for
+  `/docs/a.pdf`, the URL of `static/docs/a.pdf`, with a redirect to the
+  default version, `/docs/v1/a.pdf`, where nothing answered, while
+  `accent build` publishes the file at `/docs/a.pdf`. The server now serves
+  the file there, as the build does.
+- **Component findings name the line of the file.** `accent validate`, the
+  admin validation report and the MCP validation resource counted a
+  component finding's line from the first line of the page's body, so a
+  finding pointed as many lines above its tag as the frontmatter was long. A
+  finding inside a `---section:` region was counted from the section's
+  marker. Both now name the line of the page's file.
+- **`accent serve` allows scripts only for features the site runs.** The
+  served `script-src` named `'wasm-unsafe-eval'` whenever the search backend
+  was DocFind, on a site with `search.enabled: false` too, and in dev the
+  Mermaid CDN origin with `diagrams.enabled: false`. On such a site the
+  build's header artifacts named neither, so a page tested locally ran under
+  a wider policy than the one deployed. The server now adds each source
+  only when the feature is on, and decides `'wasm-unsafe-eval'` as the build
+  does.
+- **Site search keeps the results in the reader's language.** On a site with
+  two or more `site.languages`, search listed the pages of every language,
+  so a reader on an English page got German results, and Enter could open
+  one. A search form now lists the pages in the language of the page it is
+  on, with Simple Search and DocFind, in `accent serve` and `accent build`,
+  and the result limit counts the results after scoping. The form's empty
+  message and the name of its results list were English on every page:
+  `search_form()` now takes them as `no_results` and `results_label`, and the
+  `{% search %}` tag as attributes of the same names, so a theme passes them
+  in the page's language. To list every language, pass
+  `all_languages=true`.
+- **Redirect pages are in no index.** A page with `redirect:` was listed in
+  `sitemap.xml`, in the search index of both backends, in `llms.txt` and
+  `llms-full.txt`, in the feeds when it had a date, and on tag and other term
+  pages when it had terms, although its URL serves no content. Search listed
+  each stub as a result with nothing to show, and the sitemap of every site
+  from `accent init` listed `/`, which redirects to `/home`. A translation
+  that redirects was also named as an `hreflang` alternate, in the sitemap and
+  in the head of each sibling page, and listed in `page.translations`, which
+  drives language switchers.
+  These outputs now leave a redirect page out, in `accent serve` and
+  `accent build`, as content collections already did. `noindex: true` still
+  does not reach site search; `search.exclude` leaves a page out of it.
+- **A taxonomy without its own templates lists its own terms.** A configured
+  taxonomy whose theme has no `<name>.html.jinja` renders through
+  `tags.html.jinja`, which listed `taxonomy.tags`, so `/categories` showed the
+  site's tags, and its term pages linked back to `/tags`. Every taxonomy page
+  now carries `taxonomy.name`, `taxonomy.singular`, `taxonomy.terms` and, on a
+  term page, `taxonomy.current_term`, which name the taxonomy being rendered
+  on the tag pages and on a configured taxonomy's alike. The starter's and the
+  default theme's tag templates use them, so they render every taxonomy. A
+  theme of your own that relies on the fallback lists the tags until its tag
+  templates do the same: list `taxonomy.terms`, link through
+  `term_url(taxonomy.name, term)`, and compare with `taxonomy.current_term`.
+- **The search island keeps the results in the reader's language.** On a
+  site with two or more `site.languages`, the search island listed the pages
+  of every language, and its empty message and results label were English.
+  It now scopes its results and takes its texts as every search form does.
+- **The search box of `accent serve <dir>` names the backend the server
+  serves.** It named Simple Search while the server served DocFind; both
+  worked, because the Simple index is always served. It now loads DocFind
+  when the server serves it, as `accent serve` on a site does.
+
 ## [0.27.2] - 2026-10-18
 
 A bug-fix release for the v0.27 line that also carries two features. It
