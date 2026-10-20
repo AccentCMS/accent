@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.4] - 2026-10-20
+
+A security release for the v0.27 line. It takes wasmtime 48.0.7, which fixes
+a miscompile on 64-bit ARM and a host panic in the plugin runtime, and stops
+Accent's TLS clients from trusting certificate chains through emSign
+intermediates whose private keys are public. Nothing else changes.
+
+Cut from the `release/0.27.x` maintenance branch rather than from `master`,
+so anyone whose licence ceiling is 0.27 can take it.
+
+### Security
+
+- **wasmtime 48.0.7 (from 48.0.6) fixes two advisories in the plugin
+  runtime.** On 64-bit ARM (Apple silicon and Linux arm64), the compiler
+  could make a large `br_table` instruction in a plugin jump to the wrong
+  target (RUSTSEC-2026-0379). A host-created component stream lowered into a
+  guest that expects a different payload type could panic the host
+  (RUSTSEC-2026-0378). Only plugins run through wasmtime, so a site without
+  plugins never reaches this code. The manifest now requires 48.0.7, so the
+  lockfile cannot move back below it.
+- **Outbound TLS no longer trusts the distrusted emSign intermediates.** Their
+  private keys are now public, so a certificate chained through them could
+  impersonate a server to Accent's HTTP and mail clients: plugin outbound
+  HTTP, hub downloads and SMTP. rustls-webpki 0.103.16 rejects those chains
+  (RUSTSEC-2026-0382), and webpki-roots 1.0.10 drops the root they chain to
+  (RUSTSEC-2026-0381). Accent's own TLS server does not verify client
+  certificates and is not affected.
+
 ## [0.27.3] - 2026-10-19
 
 A bug-fix release for the v0.27 line. It fixes nine bugs: site search listed
