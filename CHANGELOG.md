@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.5] - 2026-10-24
+
+A security and bug-fix release for the v0.27 line. It closes a way for a
+remote mount to publish script through a Mermaid diagram, filters every
+server-rendered diagram before it reaches a page, takes two dependency
+advisories, and fixes the licence CLI problems a review of 0.27.4 found.
+
+Cut from the `release/0.27.x` maintenance branch rather than from `master`,
+so anyone whose licence ceiling is 0.27 can take it.
+
+### Security
+
+- **Diagrams can no longer carry script into a page.** A Mermaid `style`,
+  `classDef` or `linkStyle` value with a quote in it became an event handler
+  in the rendered SVG, and a `click` target kept any scheme, `javascript:`
+  included. Diagrams render after the escaping that keeps a remote mount's
+  raw HTML inert, so a third-party page without `allow_html` could publish
+  script through a `mermaid` fence. The Mermaid renderer now keeps only
+  style values made of the characters colours and lengths need, and only
+  `http`, `https`, `mailto` and relative `click` links. Independently, every
+  server-rendered diagram, from Mermaid, Svgbob or a plugin, now passes a
+  filter before the page is written: only SVG drawing elements survive,
+  event handlers and links with any other scheme are removed, and a
+  stylesheet that could load from another host is dropped. Diagrams cached
+  before the update are rendered again.
+- **Webhook and preview-token signatures are compared in constant time
+  again.** RUSTSEC-2026-0385: `ctutils` before 0.4.4 could compile the
+  comparison behind HMAC verification to a branch, which leaks timing. That
+  comparison checks git webhook signatures, CDN webhook signatures and
+  preview tokens; measuring the leak over a network is hard, but it is what
+  a signature-forging attack needs. Accent now locks `ctutils` 0.4.5.
+- **tokio 1.53.3.** RUSTSEC-2026-0386 reports that `tokio`'s `AsyncFd`
+  constructors accept file descriptors the caller does not own. Accent
+  never constructs one, so nothing was exposed; the patch release clears
+  the warning.
+
+### Fixed
+
+- **`accent license activate` fails when it refuses a key.** An empty,
+  invalid, or unknown-edition key printed an error but exited 0, so a CI job
+  that installs a key could not tell it failed. It now exits 1, as does
+  `buy` or `renew` when the key it receives is refused or never arrives.
+- **`accent license deactivate` removes any key in the file.** An invalid or
+  lapsed key read as "no license key configured" and could not be removed.
+  The command now removes whatever key `config.yaml` holds, and says when a
+  key in `ACCENTCMS_LICENSE` stays in effect instead of claiming the server
+  will run without one.
+- **`accent license renew` and `refund` work outside a site directory.** Like
+  `status`, they now take the key from `ACCENTCMS_LICENSE` when the current
+  directory has no `config.yaml`.
+- **The `accent license buy` edition prompt no longer chooses for you.** An
+  empty or unknown answer picked Standard; the prompt now asks again, and a
+  run without a terminal must pass `--edition`. The Pro line no longer lists
+  the gRPC API, which has not shipped.
+- **License typos are reported as typos.** An unknown `--edition` or
+  `--cadence` said "internal server error"; the message now names the value
+  and the choices.
+- **`accent license refund` opens the right customer portal.** It opened
+  `polar.sh/accentcms/portal`, which does not exist; it now opens
+  `polar.sh/accentx/portal`, where you sign in to manage or refund your
+  subscription.
+- **Docs pages are described as technical articles again.** The JSON-LD
+  auto-detection checked for a date and an author before it checked for a
+  `/docs/` URL, so every docs page with both was published as a
+  `BlogPosting`. Pages under `/docs/` now get `TechArticle`; a `news` tag,
+  a price, a version or an event location still takes precedence.
+
 ## [0.27.4] - 2026-10-20
 
 A security release for the v0.27 line. It takes wasmtime 48.0.7, which fixes
