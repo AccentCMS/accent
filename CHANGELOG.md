@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.6] - 2026-10-30
+
+A security release for the v0.27 line. It takes the fixes for three groups of
+dependency advisories RustSec published this week, wasmtime 48.0.8 among them,
+and moves the Sass compiler to accent-sass 0.18.0.
+
+Cut from the `release/0.27.x` maintenance branch rather than from `master`,
+so anyone whose licence ceiling is 0.27 can take it.
+
+### Security
+
+- **wasmtime 48.0.8.** Four advisories against wasmtime 48.0.7, which runs
+  Accent's plugins: a WASI UDP `send` could reach an address allowed only for
+  receiving (RUSTSEC-2026-0420), typed functions with `i31` or `nullref`
+  arguments could panic (RUSTSEC-2026-0422), host-created struct types could
+  be confused across engines (RUSTSEC-2026-0423), and passing a borrowed
+  resource between components skipped a memory check (RUSTSEC-2026-0424).
+  Plugins import no WASI sockets, so the UDP issue can't arise. 48.0.8 fixes
+  all four and stays on wasmtime's long-term-support line.
+- **pulldown-cmark 0.13.5.** RUSTSEC-2026-0414: with wikilinks on, a few
+  kilobytes of `[[a|]]` links make the Markdown parser's output grow
+  exponentially and exhaust memory. Accent's own Markdown parser, which turns
+  wikilinks on, already carried the fix. The Markdoc engine used an affected
+  release but never turns wikilinks on. Both now run fixed code.
+- **zstd-sys 2.1.2.** Four advisories against the zstd crates, which reach
+  Accent only through wasmtime's plugin compilation cache. RUSTSEC-2026-0410
+  concerns a WebAssembly build of `zstd-sys` that Accent never makes, and
+  2.1.2 fixes it. The other three (RUSTSEC-2026-0391, -0398 and -0403) need a
+  reused compression context, the `seekable` feature or legacy frame support,
+  and the cache uses none of them. They clear when a wasmtime 48 release moves
+  to `zstd` 0.14.
+
+### Changed
+
+- **Sass compiles with accent-sass 0.18.0**, which follows dart-sass 1.107.0.
+  Escapes now print the way dart-sass prints them: text at statement level
+  keeps its escapes as written, an escape in an expression that names no valid
+  character (U+0000, a surrogate, or past U+10FFFF) becomes U+FFFD, keywords
+  match through escapes, so `!\69 mportant` now works, and a unit that reads
+  like an exponent is written with an escaped `e`. A theme whose Sass uses
+  escaped identifiers can compile to different CSS. The bundled themes compile
+  byte for byte as before.
+- **accent-proust 0.12.3**, the Markdoc engine. It fixes how the engine's
+  formatter reprints a blockquote inside a list item. Accent's output doesn't
+  change.
+
 ## [0.27.5] - 2026-10-24
 
 A security and bug-fix release for the v0.27 line. It closes a way for a
