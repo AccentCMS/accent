@@ -5,6 +5,217 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-11-01
+
+Pages can have an identity that survives a move or a rename. A model gives
+each page a `uid` and an optional alias, reference fields follow both, and a
+moved page keeps answering at its old URL. Models can also declare computed
+values -- counts, sums, groups, and formulas over other pages -- that you read
+as `page.computed` in a template, as `$computed` in a page body, from `accent
+query`, from the REST API, and from MCP and agents. `accent content import`
+brings another site's pages in as stamped copies you reference as
+`origin/alias`. The index file names a directory answers to, `default.md`,
+`README.md` and `index.md` by default, are now configurable, and the docs
+theme `accent init --docs` scaffolds gains a Topics page for each version.
+
+Fixes include incremental builds that refresh computed values, `accent new`
+numbering pages on a flat corpus, and a license response header that follows
+a config reload. The unused `rsa` crate is out of the binary, and about 110
+dependencies move to their latest compatible releases.
+
+Three changes can need action when you upgrade:
+
+- **`serve` and `build` pick the same index file.** When a directory holds
+  more than one index file, `accent build` now follows the documented
+  priority, as `accent serve` always did. A built site that relied on
+  `index.md` winning over `README.md` or `default.md` changes; keep one index
+  file per directory.
+- **URL paths in `aliases` redirect.** A page whose frontmatter `aliases`
+  list holds a URL path such as `/old-url` now answers there, on any site:
+  `accent serve` redirects it to the page and `accent build` writes a
+  redirect stub, unless a page already lives at that path. If you used
+  `aliases` for something else, rename the key.
+- **Identity checks in `accent validate`.** Two pages with the same `uid`
+  are now an error on every site, and a `type: reference` field that names a
+  `model:` now resolves its value, so a value that names no page of that
+  model is an error. A site that uses neither sees no new findings.
+
+### Added
+
+- **Configurable index filenames.** A file named `default.md`, `README.md`,
+  or `index.md` answers its directory's URL. You can now change that list:
+  set `content.index_files` in `config.yaml` to add a name such as `Home.md`
+  (the GitHub wiki convention), reorder the priority, or drop a name. To use
+  a different list in one part of the tree, set `index_files` in a
+  `_model.yaml` in that directory; it applies there and in every directory
+  beneath. `default.md` always counts, and `accent validate` reports an
+  invalid list in a `_model.yaml`.
+
+- **Pages can carry a stable identity.** A model that declares `uid:` and
+  `alias:` gives each page a `uid` that Accent mints once when the page is
+  created, and an optional alias, the human label the page is known by,
+  such as `d042`. The alias has a `grammar` (the same segment language as
+  `filename:` patterns), a `scope` (`global` or `container`), and a
+  `renumber` policy (`retire` or `never`). When a page changes its alias,
+  `retire` keeps the old label in an `aliases` list, where it stays
+  claimed and still resolves. `accent new`, the admin editor, the content
+  API, agents, and MCP all mint the `uid`; you never write it by hand.
+
+- **Reference fields that follow identity.** A `type: reference` field
+  with a `model:` target holds an alias, a retired alias, or a `uid`, and
+  the content index resolves it to a page. `accent validate` reports a
+  duplicate `uid`, a missing required `uid`, a duplicate alias in one
+  scope, an alias that does not match the grammar, retired aliases on a
+  `renumber: never` model, and a reference that resolves to nothing or to
+  a page of the wrong model. In templates, `identity_index()` maps every
+  `uid`, alias, and retired alias to its page URL. A `reference` field
+  without `model:` stays a plain string that Accent never resolves.
+
+- **Moved pages keep answering at their old URLs.** A model can declare
+  `alias: { grammar: path }`, which makes the page's URL its alias. When
+  you move such a page in the admin, on the CLI, or through the API,
+  Accent adds the old URL to `aliases`. `accent serve` redirects the old
+  URL to the page, and `accent build` writes a redirect stub there, so a
+  static host needs no extra rules. This works for any retired alias that
+  is a URL path.
+
+- **Claim a label on the shared remote.** With `allocation: ref`, a model
+  claims each new alias as a create-only Git ref,
+  `refs/claims/<model>/<alias>`, locally and on `origin`. Two writers who
+  share the remote cannot claim the same label: the second push is
+  rejected and that writer takes the next label. It needs a repository
+  with an `origin` remote and a network connection when you file the page,
+  and it does not fall back to `allocation: local`. `grammar: path`
+  cannot use it.
+
+- **Computed values on models.** A model's `computed:` block declares
+  values that every page of the model carries, evaluated when Accent
+  renders and never stored. A query counts (`count`), sums (`sum`, as an
+  exact decimal string), or groups (`group`) the pages of another model,
+  matched through a field with `via`, and filters with `where`. A formula
+  combines the page's fields and its other computed values with
+  arithmetic, comparisons, `and`/`or`/`not`, and the date and decimal
+  functions. Read the values in a template as `page.computed`, for
+  example `page.computed.features_done | default(0)`. `accent validate`
+  reports a failed query or formula, a formula cycle, and an expression
+  outside the supported subset.
+
+- **Computed values in the page body.** The same values are Markdoc
+  variables under `$computed`, so a page can write
+  `{% $computed.features_done %} of {% $computed.features_total %}` or
+  branch on a value with `{% if %}`, with no template change. `accent
+  validate` reports a `$computed` name the page's model does not declare.
+  The server re-renders a cached page when its computed values change,
+  and an incremental `accent build` rebuilds exactly the pages whose
+  values changed.
+
+- **Read computed values from every query surface.** `accent query
+  computed <url>` prints a page's URL, resolved model, and computed values
+  as JSON. The REST API answers `GET /api/v1/computed/<url>` when
+  `api.enabled` is on, the MCP server has a `get_computed` tool, and
+  `accent agent` sessions get a read-only `get_computed` tool. A page
+  whose model declares no computed values answers 404 on the API, and
+  `accent build` writes `/api/v1/computed/<url>.json` for exactly those
+  pages that have values, so a CDN serving the built output answers the
+  same way.
+
+- **Import another site's pages with `accent content import`.**
+  `accent content import <source>` copies every markdown page of another
+  site checkout, or of a bare content directory, to
+  `content/imports/<origin>/`. Each copy keeps its `uid` and relative path
+  and carries `origin: <slug>` in its frontmatter. The slug comes from
+  `--origin` or from the source's `site.origin`. Importing again replaces
+  pages by `uid`, so a page the source moved replaces its old copy. Add
+  `--dry-run` to see what would change.
+
+- **Reference imported pages as `origin/alias`.** A site names itself with
+  `site.origin` in `config.yaml`. Imported pages keep their aliases
+  claimed in their own origin, so your `f12` and an imported `f12`
+  coexist. Write `dep: accent-sass/f12` to reference the imported page; a
+  bare alias always names your own page, and a bare alias inside an
+  imported page keeps meaning its own corpus. `accent validate` warns when
+  a qualified reference names a page that is not imported, and reports a
+  duplicate alias within one origin as an error. A computed `group`
+  query on the `origin` field counts pages per corpus.
+
+- **A Topics page for each version of the docs site.** `accent init
+  --docs` scaffolds a docs theme that adds a Topics page to each version
+  of the documentation, with a sized topic cloud and a filter box. Each
+  docs page ends with its topics as links, the header has a Topics link,
+  and `/tags/<tag>` groups its pages by version, newest release first,
+  with older versions folded away.
+
+### Changed
+
+- **`uid`, `alias`, `aliases`, and `origin` are core fields.** Every
+  model inherits them, so strict mode no longer flags them as unknown, and
+  the admin shows them as read-only. They are not required, and a page
+  without them is unchanged.
+
+- **`accent init --docs` also creates a `models/` directory.** The
+  scaffolded docs site declares a `docs-overview` model whose computed
+  page count the computed-values guide shows, and the default docs theme's
+  `docs` template now renders `page.computed` the way `default` does.
+
+- Dependency currency pass: every direct and transitive dependency moves
+  to its latest semver-compatible release (about 110 crates, rmcp 3.8 and
+  tokio 1.54 among them), and `ed25519-dalek` moves to 3.0. License key
+  signing and verification behavior is unchanged. wasmtime stays on the
+  48 LTS line by policy.
+
+- The Svgbob diagram renderer now builds from the `zoosky/accent-svgbob`
+  fork (0.8.0, rev-pinned) instead of crates.io `svgbob 0.7.2`. The fork
+  removed svgbob's dormant `sauron` web-framework dependency, whose
+  `futures = "=0.3.30"` exact pin blocked dependency resolution for the
+  whole workspace, and its SVG output is byte-parity-gated against the
+  previous renderer. Rendered diagrams are unchanged for the parity
+  corpus; the one qualification is that the fork's `unicode-width 0.2`
+  follows newer Unicode width tables, so diagram text using characters
+  whose column width changed there (conjoining Hangul jamo, some
+  emoji-presentation characters) lays out by the new widths.
+
+### Fixed
+
+- **`accent serve` and `accent build` now pick the same index file.** When a
+  directory held more than one index file, `serve` followed the documented
+  priority (`default.md`, then `README.md`, then `index.md`), but `build`,
+  navigation, search, and the sitemap took the last file in sort order, so
+  `index.md` won over `README.md` and `default.md`, and a lowercase
+  `readme.md` won over `default.md`. Both now follow the documented
+  priority. If a built site depended on the old choice, keep one index file
+  per directory.
+
+- **A config reload updates the license response header.** After you change
+  the license key in `config.yaml` and reload with SIGHUP or
+  `POST /_admin/reload`, `accent serve --production` sends the new key's
+  `X-Accent-License` value. It used to keep the value it started with until
+  it restarted.
+
+- **`accent new` numbers pages on a flat corpus.** With a bare `{number}`
+  or `{order}` in the filename pattern, `accent new` always wrote `0` or
+  `01`. It now scans the target directory and uses the number after the
+  highest one there. A model whose file pattern varies per page now writes
+  flat into `--path`, not into a directory per page, and a `--path` that
+  does not exist is an error instead of creating a new tree.
+
+- **An incremental build refreshes computed values.** When you changed a
+  page that a computed query counted, filtered, or grouped, an incremental
+  `accent build` rebuilt only the edited page, so the page that showed the
+  count kept the old number until a clean build. The build now records
+  each page's computed values and rebuilds the page when they change.
+
+### Security
+
+- **The `rsa` crate is out of the binary.** Licence keys, licence
+  artifacts and signed distribution records are Ed25519 JWTs, but the JWT
+  library's crypto backend also brought RSA, P-256 and P-384, and `rsa`
+  carries a timing advisory with no fix (RUSTSEC-2023-0071). Accent never
+  used it, so the advisory could not be reached; it was the one `cargo
+  audit` ignore with no fix to wait for. Accent now verifies with an
+  Ed25519-only backend, and `rsa`, `p256` and `p384` are gone from the
+  dependency tree, with 15 other packages. Existing licence keys keep
+  working.
+
 ## [0.27.6] - 2026-10-30
 
 A security release for the v0.27 line. It takes the fixes for three groups of
@@ -565,7 +776,7 @@ pages that link, query, and validate correctly. Five security fixes stop
 routes and builds from reading or publishing files they should not. YAML
 parsing follows YAML 1.2.2 more closely.
 
-Four changes can need action when you upgrade:
+Five changes can need action when you upgrade:
 
 - **Tag URLs move to slugs.** `/tags/javascript runtime` is now
   `/tags/javascript-runtime`. Static builds and `accent serve` redirect the
@@ -576,8 +787,16 @@ Four changes can need action when you upgrade:
   over `page.translations`.
 - **A broken component manifest fails `accent build`.** Pass `--lax` to keep
   the old warning.
-- **Stricter YAML.** A hex or octal number with an uppercase prefix (`0X1F`)
-  now reads as a string, and a control character in a comment is an error.
+- **The build manifest moved out of the output.** It now lives in
+  `.accent/build/` beside `config.yaml`; the first build after the upgrade
+  reads the old file and deletes it locally. If your deploy never deletes
+  remote files, delete `/.build-manifest.json` from your host, and cache
+  `.accent/build/` with the output in CI to keep builds incremental.
+- **Stricter YAML and dates.** A hex or octal number with an uppercase prefix
+  (`0X1F`) now reads as a string, and a control character in a comment is an
+  error. A `publish_date` that is neither a date nor an ISO 8601 timestamp
+  keeps the page a draft instead of publishing it. `accent validate` reports
+  each of these.
 
 ### Added
 
