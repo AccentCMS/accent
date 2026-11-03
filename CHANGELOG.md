@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.1] - 2026-11-03
+
+### Added
+
+- `accent content stamp-identity --model <m> [--alias-from-filename]
+  [--dry-run]` adds identity to pages that exist. It mints a `uid` for
+  every page of the model that lacks one and can write the alias each
+  file name carries. A corpus that predates its identity declaration can
+  now adopt `uid: { required: true }` without hand-written UUIDs.
+
+### Fixed
+
+- A misspelled key in a document model is now reported instead of ignored.
+  `accent validate` warns with the key and its place, for example
+  `modules: unknown key 'allowd' is ignored`, and `serve`, `build`,
+  `model list`, and `new` print the same list. The model still loads and
+  still governs, and a build never fails on it. Note: `accent validate`
+  exits non-zero on a warning, so a site whose models carry such a key
+  sees `validate` turn red until the key is fixed. A file a higher tier
+  overrides, or a model a load check removes, is not reported.
+- An unknown key in a model's `uid:` or `alias:` declaration now stops the
+  model load with a message that names the key. A `uid:` block that held
+  the `alias:` keys loaded with no message and declared no alias.
+- `accent query list --fields url,title` now prints the selected fields of
+  each page. The filter ran on the pagination envelope and printed `{}`.
+- `accent query search` no longer panics with the default and `docfind`
+  backends. Since f137b the search handler blocked on the runtime that was
+  driving it. The `query` command now runs before the CLI runtime, and the
+  native search waits on a runtime of its own.
+
 ## [0.28.0] - 2026-11-01
 
 Pages can have an identity that survives a move or a rename. A model gives
