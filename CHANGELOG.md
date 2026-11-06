@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.2] - 2026-11-05
+
+A maintenance release for the 0.28 line. It carries six fixes from two
+production site conversions and a dependency security update.
+
+### Security
+
+- The lockfile moves to zstd 0.13.4 and zstd-safe 7.4.0. Upstream
+  backported the fixes for RUSTSEC-2026-0391, RUSTSEC-2026-0398 and
+  RUSTSEC-2026-0403, and ten soundness fixes, into the stable lines.
+  The affected code paths were not reachable from Accent; the update
+  removes them from the binary regardless.
+
+### Fixed
+
+- The Netlify `_redirects` artifact is now checked against the
+  documented host limits. Cloudflare Pages loads at most 2,000 static
+  and 100 dynamic rules per file and ignores the rest; a build over a
+  cap now warns with the counts and the remedies. A rule over
+  Cloudflare's 1,000-character declaration limit fails the build and
+  names the source path. Netlify documents no hard cap, so a Netlify
+  deployment is unaffected.
+- `accent validate` now explains a quoted number or boolean attribute.
+  `width="914"` on a `number` parameter failed with only "must be type
+  of 'Number'", and the author saw a value that is a number. The message
+  now names the quotes and the spelling to write: `Write width=914.`.
+  The hint appears only when the unquoted text would parse as the
+  declared type; `width="wide"` keeps the plain message.
+- `accent serve` with `server.address: "0.0.0.0"` now announces
+  `https://127.0.0.1:PORT` instead of the bind address. `0.0.0.0` is a
+  bind address, not a connect address: current Chrome and Safari refuse
+  to open it, so the banner's one clickable link landed on a dead page
+  while the server was healthy. An IPv6 wildcard bind announces
+  `localhost`. A concrete address is printed as before. The same applies
+  to `accent serve-static` (also its `--open` URL), the ad-hoc preview,
+  and the embedded docs server.
+- The Netlify `_redirects` artifact now answers a real 301 for each
+  redirect the build derives. The build writes content at each old URL: a
+  meta-refresh stub, or the home page's own output. Netlify applies an
+  unforced rule only where no content exists, so the promised 301 never
+  fired. The artifact now writes each stub-backed move twice. The forced
+  line (`301!`) comes first, and Netlify applies it over the stub. The
+  plain line follows for Cloudflare Pages, which skips forced syntax and
+  applies redirects over content. A move whose old URL holds other real
+  output stays one unforced line. Rules from `build.routing.redirects`
+  stay exactly as configured.
+- `accent new` on a model that declares `alias:` now writes the alias
+  that the file name carries, next to the minted `uid`. The `--dry-run`
+  output shows it. Before, every CLI-created page needed its alias added
+  by hand. The scaffold also writes `template: <model>` only when the
+  theme carries that template. A fresh page no longer starts as a
+  validate warning on a theme without one.
+- `accent build` writes the redirect stub of an `.html` or `.htm` alias as
+  a file, not a directory. With `aliases: ["/index-old.html"]`, the stub
+  now lands at `index-old.html`, so a static host answers the literal old
+  URL. Before, the stub landed at `index-old.html/index.html`, which a
+  host serves only after a trailing-slash hop. `accent serve` always
+  answered the clean 301.
+
 ## [0.28.1] - 2026-11-03
 
 ### Added
