@@ -5,6 +5,268 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-11-23
+
+Component manifests can declare the page-context values that their
+templates read, with `context:`. `accent validate --templates` now checks
+each component template against its manifest: the attributes, the body and
+the page-context values that it reads, and the method calls that fail the
+render. The MCP `validate_templates` tool reports the same findings. A site
+can set one trailing-slash policy, `site.trailing_slash`, and a host with no
+header support can get the page CSP as a `<meta>` tag. Listing records carry
+`language` and a rendered `excerpt_html`.
+
+Plugins can call a model that you set in `plugins.model`, and the admin
+Source view lints the frontmatter as you type. The search indexes build
+about five times faster, and outside dev mode `accent serve` keeps the
+search index between requests. Fixes include the template checks and the
+theme reads on a site with `theme.embedded: viewer`. The toolchain moves to
+Rust 1.99.1.
+
+Some changes can need action when you upgrade:
+
+- **The YAML parser is stricter.** noyalib 0.0.63 reads closer to YAML
+  1.2.2. A file with a byte order mark inside a scalar, a block mapping
+  value that is not indented past its key, or a raw C1 control character no
+  longer parses. `!int 5` is now an application tag; use `!!int`.
+- **The admin UI is on by default.** A binary with a Core+, Standard, or
+  Pro license mounts `/_admin/` unless `admin.enabled: false` is set. The
+  strict `script-src` policy now applies to the admin UI. Before a service
+  install, set `admin.enabled: false` to keep the service user read-only on
+  content.
+- **`--strict-links` is removed.** `accent build --strict-links` fails with
+  an unknown-argument error. Remove the flag from your deploy scripts.
+- **`--site-dir` reads one layout.** `accent validate`, `accent new`, and
+  `accent model` read `<site-dir>/content` and `<site-dir>/themes`, as the
+  other commands do. Before, they read `<site-dir>/site/content/main`.
+- **`--theme` and `--theme-dir` select a theme on disk.** On a site with
+  `theme.embedded: viewer`, these flags now select the named theme in every
+  command.
+- **`accent validate --templates` finds more.** A component template that
+  does not parse, or that calls a method on `attrs` or `body`, is an error.
+  A component manifest that does not compile, or a theme that does not
+  load, fails the run also under `--lax`.
+- **Declare `context:` in your component manifests now.** This release
+  only warns about an undeclared read. A later minor release will give a
+  component only the page-context values that its manifest declares.
+- **Two output changes.** Each footnote gets a back-reference;
+  `markdown.footnote_backrefs: false` restores the old output. A
+  highlighted code block is now `<pre><code class="language-...">`, as an
+  unhighlighted block is.
+
+### Added
+
+- Declared component context: a component manifest can list the
+  page-context values that its template reads, for example
+  `context: [all_pages, page]`. The component gallery and the admin
+  inspector show the list. `accent validate --templates` warns when a
+  template reads a value that the list does not name, with the line and
+  the list to add. A call to `recent_documents()`, `page_ref_index()`,
+  `identity_index()` or `nav_tree()` counts as a read of `all_pages`.
+  The render does not change in this release. A later minor release will
+  give a component only the values that its manifest declares, so add
+  `context:` to your component manifests now.
+- Component template reads check: `accent validate --templates` warns
+  when a component template reads an attribute that its manifest does
+  not declare. Validation rejects such an attribute, so on every page
+  that validates, the value is empty. The warning gives the template
+  line, the declared names, and the nearest name. It also warns when a
+  template reads `body` and the manifest declares no body, or a member
+  of an undeclared attribute. Some reads fail every page that uses the
+  component: a method call on `attrs`, `body` or an attribute value,
+  and a template that does not parse. These are errors, and the command
+  exits 1.
+- Plugin model calls: a plugin that declares `host_services = ["model"]`
+  asks the model that you set in `plugins.model` (`anthropic`, or any
+  OpenAI-compatible server such as Ollama). The plugin sends only the
+  messages, so the model can run on the same machine or your network. The
+  key comes from `ACCENTCMS_PLUGIN_MODEL_API_KEY`. The `llm-tagging` plugin
+  0.3.0 uses this with `type = "host"`.
+- Trailing-slash URL policy: `site.trailing_slash: never|always`. One
+  resolver decides every URL the engine writes, and a conformance
+  sweep checks the output against the policy. A site on GitHub Pages,
+  Netlify, or Cloudflare Pages can advertise the slash form its host
+  serves with 200.
+- In-page header fallback for header-less hosts: a header rule with
+  `target: meta` writes the page CSP and the referrer policy as
+  `<meta>` tags into the built page. The build summary names every
+  header class that meta tags cannot carry.
+- Footnote back-references: the first reference of each footnote gets
+  an id, and each definition gains a return arrow.
+  `markdown.footnote_backrefs: false` restores the previous output
+  byte for byte.
+- Admin source lint: the page editor's Source view lints the
+  frontmatter as the author types, through the yqr engine compiled to
+  WebAssembly. The pane becomes editable when the engine loads, and it
+  stays the read-only view when it does not. `admin.source_lint:
+  false` turns it off.
+- Language on listing records: every entry of `pages`, `all_pages`,
+  and the collections carries a `language` field. A template scopes a
+  listing with `selectattr("language", "equalto",
+  site.current_language)`.
+- Rendered excerpts on listing records: every entry of `pages`,
+  `all_pages`, the collections, and relations carries `excerpt_html`.
+  The value is the body before a `<!--more-->` marker, or its first 40
+  words, rendered to sanitized HTML with balanced tags. Raw HTML,
+  images, footnotes, and link anchors that would not resolve from the
+  listing page are removed. Print it with
+  `{{ post.excerpt_html | safe }}`. `lead` stays the plain-text
+  summary.
+
+### Changed
+
+- `accent build` builds the search indexes faster. On a 2,026-page site,
+  the search phase fell from 1.47 s to 0.31 s. The index files are the
+  same, byte for byte. <!-- Feature f450 -->
+- Outside dev mode, `accent serve` builds `/_search/index.json` once for
+  each version of the content and keeps it. Before, each request built the
+  index again. A content change, a config reload, or a theme reload gives a
+  new index on the next request. When a build takes more than 30 s, the
+  request receives a 503, and the build still runs. <!-- Feature f457 -->
+- The library functions `build_search_index`, `generate_docfind_documents`,
+  and `DocFindServeState::new` now require a page map whose hasher is
+  `Sync`, because they read the pages on a thread pool. The standard
+  `HashMap` hasher is `Sync`.
+- The YAML parser (noyalib 0.0.63) reads closer to YAML 1.2.2. A config,
+  theme, model, or frontmatter file now fails to parse when it has one of
+  these:
+  - A byte order mark (U+FEFF) inside a plain or block scalar or a
+    comment. A byte order mark at the start of the file still reads.
+  - A block mapping value on a later line that is not indented past its
+    key.
+  - A raw C1 control character outside a quoted scalar.
+
+  A local tag such as `!int 5` is now an application tag, not an
+  integer. Use `!!int` for the core type. An error path now shows a
+  sequence index in brackets, for example `items[0].name`. The docs,
+  dev, web, and specs sites build to the same bytes as before.
+
+- The Accent Author admin UI is enabled by default. `admin.enabled`
+  defaults to `true`, so a binary with a Core+, Standard, or Pro
+  license mounts `/_admin/` without further configuration. Set
+  `admin.enabled: false` to keep it off. Without a license the shell
+  stays unmounted as before, and the server now prints the Core+
+  notice at startup. The admin login still requires the admin token.
+  `accent service` consequence: a default config now plans Modify
+  access on the content directory, because the admin edits content.
+  Set `admin.enabled: false` before a service install to keep the
+  service user read-only on content.
+- The strict `script-src` policy is now enforced on the admin UI.
+  `script_policy.report_only_paths` defaults to `[]`; the previous
+  default sent the directive report-only on `/_admin/*`. To return the
+  admin to report-only, set
+  `http_headers.security.script_policy.report_only_paths: ["/_admin/*"]`.
+- The frontmatter editor delegates every mutation to the yqr engine's
+  typed edit API, the same engine the admin lint runs in the browser.
+  The output is byte-identical, and the byte-identity suite pins it.
+- The toolchain moves to Rust 1.99.1.
+- **accent-proust 0.13.1**, the Markdoc engine. It reads comment blocks
+  and the lines after a pipe table as upstream Markdoc does. The engine's
+  formatter now escapes a `|` in a table cell. The docs site builds byte
+  for byte as before.
+
+### Removed
+
+- `accent build --strict-links`. A broken internal link has failed the
+  build by default since 0.26, so the flag had no effect. Its notice said
+  that 0.27 removes it, but 0.27 and 0.28 still accepted it. A deploy
+  script that still passes the flag now fails with an unknown-argument
+  error. Remove the flag from the script.
+
+### Fixed
+
+- A site with `theme.embedded: viewer` renders with the built-in viewer
+  theme. A theme directory at `theme.directory/theme.name` is then not the
+  site's theme, but several places read it:
+  - `accent build` and `accent serve` refused to start when that theme was
+    a commercial theme with no licence.
+  - `accent build` warned about root-absolute links in its templates.
+  - Its models became site models in `accent validate`, `accent build`,
+    the dev server, `accent query`, `accent content`, `accent new`, and
+    `accent model`.
+  - The dev server checked component tags against its components, and
+    `accent query components` and `accent migrate` read them.
+  - The admin editor's component palette and inspector, and the component
+    gallery, offered its components.
+
+  These places now read the viewer theme, which has no files on disk.
+- `accent build`, `accent migrate`, `accent new` and `accent model` kept
+  the built-in viewer theme of a site with `theme.embedded: viewer` when
+  `--theme` or `--theme-dir` named another theme. They now use the named
+  theme, as `accent serve` does.
+- `accent validate`, `accent new` and `accent model` read `--site-dir` as
+  `<site-dir>/site/content/main` and `<site-dir>/site/themes`. They now
+  read `<site-dir>/content` and `<site-dir>/themes`, as the other
+  commands do.
+- `accent validate --templates` and the MCP `validate_templates` tool
+  did not check a site with `theme.embedded: viewer`. They looked for the
+  templates at `theme.directory/theme.name` and failed with "Template
+  directory not found". When a theme was at that path, they checked it,
+  though the site does not render it. Both now check the built-in viewer
+  theme, as the full `accent validate` does.
+- `accent validate` and `accent mcp` kept the built-in viewer theme of a
+  site with `theme.embedded: viewer` when `--theme` or `--theme-dir` named
+  another theme. They now use the named theme, as `accent build` does.
+- `accent validate --templates` did not report a directory under
+  `templates/` that it could not list, and parsed hidden files such as
+  editor lock files. It now lists the templates as the `accent serve`
+  readiness check does: it reports the directory as an error, and it skips
+  hidden names and `templates/shortcodes/`.
+- `accent validate --templates` and the MCP `validate_templates` tool
+  did not report a problem in a theme component manifest, for example a
+  manifest that does not compile. Such a component fails on every page
+  that uses it, and one broken manifest stopped the lints of every other
+  component template. Both now report the problem with the text of the
+  full `accent validate`, and fail on it, also under `--lax`. The other
+  templates are linted. The tool result has a new field,
+  `manifest_errors`. A theme that does not load also fails
+  `accent validate --templates --lax` now, as it fails the build.
+- The MCP `validate_templates` tool did not lint the component templates
+  and did not check the theme's conformance. Thus it reported a theme as
+  valid when `accent validate --templates` exited 1. The tool result now
+  has `component_findings`, `conformance`, and a `valid` field, and the
+  CLI prints the same findings.
+- Printing a page from Safari with the `devdocs` theme broke short words
+  in table cells in the middle ("Fea ture", "Do ne"). Short words now stay
+  whole.
+- `accent serve <dir>` with the built-in viewer printed the navigation
+  above the content, and a wide table lost its right columns at the edge
+  of the page. A printed page is now one column, black on white, and its
+  tables wrap.
+- A versioned site with a fallback chain of more than five versions
+  logged a false "fallback chain exceeded max depth" warning for each
+  page that no version in the walk had, 84 in a `site-docs` build. A
+  page that only an old version had was out of reach from a version five
+  or more steps newer. The walk now follows the chain to its end.
+- A release candidate binary now reports its tag. `accent --version`
+  and the `accent.version_string` template value showed `0.29.0-dev` on
+  v0.29.0-rc.1 to rc.3. They now show, for example, `0.29.0-rc.4`.
+- A model `min` or `max` above 2^53 lost precision, so a value one above
+  a large integer bound passed validation. An integer bound is now exact,
+  and the compiled JSON Schema writes it as an integer (`0`, not `0.0`).
+- The `llm-tagging` plugin ignored the settings in its `plugin.toml` and
+  in `plugins.config.llm-tagging`, and always used its defaults. It now
+  reads them.
+- A `plugins.config.<name>` override of a plugin's `[config]` table now
+  merges key by key. Before, it replaced the whole table, so one changed
+  key dropped the others.
+- The `X-Accent-License` header of a production server now counts
+  down. Before, its `days=` value and its status stayed fixed from the
+  start or the last config reload. A key that entered its warn window
+  or passed its expiry then still reported `valid`.
+- The dev error page and the serve log keep the full cause chain of a
+  failed include, and every request carries a tracing span.
+- A highlighted fenced code block emits
+  `<pre><code class="language-...">`, the same shape as the
+  unhighlighted path, so one selector styles both.
+- An `islands:` list in frontmatter now loads the named island
+  scripts. A template-hosted island declares its script instead of a
+  hand-written load.
+- `accent serve` no longer logs `mmdr patch version differs from expected`
+  at each start. Releases 0.27.5, 0.27.6, and 0.28.0 logged this false
+  warning on all sites. The startup check of the Mermaid renderer version
+  is removed, because the build already sets the version.
+
 ## [0.28.2] - 2026-11-05
 
 A maintenance release for the 0.28 line. It carries six fixes from two
